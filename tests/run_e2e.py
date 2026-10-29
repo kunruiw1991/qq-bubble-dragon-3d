@@ -339,8 +339,10 @@ def t11_multi_angle_ricochet_fuzz_zero_overlap_zero_oob_zero_floating(
         let shotsRun = 0;
 
         for (const ang of angles) {
-          const stBefore = api.getState();
-          if (stBefore.status !== 'playing') break;
+          let stBefore = api.getState();
+          if (stBefore.status !== 'playing') {
+            stBefore = api.startMatch({ stageId: 17, seed: 90210 + shotsRun });
+          }
           const aimed = api.setAimAngle(ang);
           const expectedSnap = aimed.trajectory.snapCell;
           api.fireBubble();
@@ -846,7 +848,7 @@ def t26_all_8_progressive_stages_load_and_playable(
       """(() => {
         const api = window.__BUBBLE_DRAGON__;
         const summary = [];
-        for (let id = 1; id <= 8; id++) {
+        for (let id = 1; id <= 20; id++) {
           const st = api.startMatch({ stageId: id });
           api.setAimAngle(0.15);
           api.fireBubble();
@@ -861,7 +863,7 @@ def t26_all_8_progressive_stages_load_and_playable(
         return summary;
       })()"""
   )
-  assert_true(len(res) == 8, f"Expected 8 stages, got {len(res)}")
+  assert_true(len(res) == 20, f"Expected 20 stages, got {len(res)}")
   for item in res:
     assert_true(item["initialBubbles"] >= 12, f"Stage {item['stageId']} too empty: {item}")
     assert_true(item["shotsFired"] == 1, f"Stage {item['stageId']} shot failed: {item}")
@@ -983,8 +985,8 @@ def _audit_viewport_helper(
       f"Overflow scrollbar detected on {width}x{height}: {audit}",
   )
   assert_true(
-      1 <= audit["controlCount"] <= 6,
-      f"Expected <= 6 visible HUD controls on {width}x{height}, got {audit['controlCount']}: {audit['controls']}",
+      1 <= audit["controlCount"] <= 5,
+      f"Expected <= 5 visible HUD controls on {width}x{height}, got {audit['controlCount']}: {audit['controls']}",
   )
   assert_true(
       len(audit["overlaps"]) == 0,
@@ -1145,6 +1147,765 @@ def t37_endless_row_feed_preserves_world_x_and_zero_cell_loss(
   )
 
 
+def t38_playfield_geometry_camera_framing_and_bubble_diameter(
+    h: BubbleDragonTestHarness,
+) -> None:
+  h.set_viewport(1280, 800, mobile=False, touch=False)
+  geom1280 = h.eval_js(
+      """(async () => {
+        const simMod = await import('./src/sim.js');
+        const st = window.__BUBBLE_DRAGON__.startMatch({ stageId: 1 });
+        const airRows = (simMod.BASE_CEILING_Y - simMod.DANGER_LINE_Y) / simMod.ROW_DY;
+        return {
+          baseCeilingY: simMod.BASE_CEILING_Y,
+          dangerLineY: simMod.DANGER_LINE_Y,
+          launcherY: simMod.LAUNCHER_Y,
+          cauldronY: simMod.CAULDRON_Y,
+          cauldronScale: simMod.CAULDRON_SCALE,
+          airRows,
+          metrics: st.chamberScreenMetrics,
+        };
+      })()"""
+  )
+  assert_true(
+      geom1280["baseCeilingY"] == 6.0
+      and geom1280["dangerLineY"] == -2.9
+      and geom1280["launcherY"] == -3.6
+      and geom1280["cauldronY"] == -4.85
+      and geom1280["cauldronScale"] == 0.8,
+      f"Playfield geometry mismatch: {geom1280}",
+  )
+  assert_true(
+      10.1 <= geom1280["airRows"] <= 10.5,
+      f"Expected ~10.3 rows of air, got {geom1280['airRows']}",
+  )
+  m1280 = geom1280["metrics"]
+  assert_true(
+      0.88 <= m1280["chamberHeightRatio"] <= 0.96,
+      f"Expected chamber to fill ~92% of 1280x800 height, got {m1280}",
+  )
+  assert_true(
+      m1280["bubbleDiameterPx"] >= 52.0,
+      f"Expected bubble diameter >= 52px on 1280x800, got {m1280['bubbleDiameterPx']}",
+  )
+
+  h.set_viewport(1024, 768, mobile=True, touch=True)
+  m1024 = h.eval_js("window.__BUBBLE_DRAGON__.getState().chamberScreenMetrics")
+  assert_true(
+      0.88 <= m1024["chamberHeightRatio"] <= 0.96,
+      f"Expected chamber to fill ~92% of 1024x768 height, got {m1024}",
+  )
+  h.set_viewport(1280, 800, mobile=False, touch=False)
+
+
+def t39_twenty_stages_seeded_template_determinism_and_endless_6rows(
+    h: BubbleDragonTestHarness,
+) -> None:
+  res = h.eval_js(
+      """(async () => {
+        const simMod = await import('./src/sim.js');
+        const defs = simMod.STAGE_DEFS;
+        const templatesSeen = new Set();
+        let parFormulaMatches = true;
+        let dropScheduleMatches = true;
+        for (const d of defs) {
+          if (d.id >= 9) templatesSeen.add(d.template);
+          const expectedPar = simMod.computeParShotsForRows(d.rows);
+          if (d.parShots !== expectedPar) parFormulaMatches = false;
+          const expectedDrop = d.id >= 12 ? 7 : 9;
+          if (d.shotsPerDrop !== expectedDrop) dropScheduleMatches = false;
+        }
+        const genA = simMod.generateStageFromTemplate({
+          id: 14, name: 'A', subtitle: 'A', template: 'zigzag', numRows: 7, numColors: 5, eggCount: 0, shotsPerDrop: 7, seed: 77777
+        });
+        const genB = simMod.generateStageFromTemplate({
+          id: 14, name: 'A', subtitle: 'A', template: 'zigzag', numRows: 7, numColors: 5, eggCount: 0, shotsPerDrop: 7, seed: 77777
+        });
+        const endlessSt = window.__BUBBLE_DRAGON__.startMatch({ modeId: 'endless', seed: 20261029 });
+        const occupiedRows = endlessSt.grid.filter((r) => r.some((c) => c !== null)).length;
+        return {
+          stageCount: defs.length,
+          templatesSeen: Array.from(templatesSeen).sort(),
+          parFormulaMatches,
+          dropScheduleMatches,
+          deterministicMatch: JSON.stringify(genA.rows) === JSON.stringify(genB.rows),
+          endlessOccupiedRows: occupiedRows,
+          endlessShotsPerDrop: endlessSt.shotsPerDrop,
+        };
+      })()"""
+  )
+  assert_true(res["stageCount"] == 20, f"Expected 20 stages, got {res}")
+  assert_true(
+      res["templatesSeen"] == ["checker", "double-arch", "egg-nest", "pyramid", "stripes", "zigzag"],
+      f"Missing stage templates in stages 9-20: {res['templatesSeen']}",
+  )
+  assert_true(res["parFormulaMatches"], f"parShots formula ceil(bubbles/3.2)+2 mismatch: {res}")
+  assert_true(res["dropScheduleMatches"], f"shotsPerDrop 9->7 from stage 12 mismatch: {res}")
+  assert_true(res["deterministicMatch"], f"Seeded stage generator not deterministic: {res}")
+  assert_true(
+      res["endlessOccupiedRows"] == 6 and res["endlessShotsPerDrop"] == 5,
+      f"Expected endless mode to start with 6 rows and feed every 5 shots, got {res}",
+  )
+
+
+def t40_stage_select_20_unlock_persistence_and_qq_hall_progress(
+    h: BubbleDragonTestHarness,
+) -> None:
+  res = h.eval_js(
+      """(() => {
+        // Seed another game's key in qq_hall_progress to verify read-modify-write merge
+        window.localStorage.setItem('qq_hall_progress', JSON.stringify({
+          kart: { plays: 3, best: 120, stars: 2, last: '2026-10-01T00:00:00.000Z' }
+        }));
+        window.localStorage.removeItem('qq_bubble_progress');
+
+        const api = window.__BUBBLE_DRAGON__;
+        api.startMatch({
+          stageId: 1,
+          customGrid: [
+            [null, null, null, 'red', 'red', null, null, null],
+          ],
+          forcedQueue: ['red', 'blue'],
+        });
+        api.setAimAngle(0.0);
+        api.fireBubble();
+        const after = api.stepFrames(55);
+
+        const bubbleProg = JSON.parse(window.localStorage.getItem('qq_bubble_progress') || '{}');
+        const hallProg = JSON.parse(window.localStorage.getItem('qq_hall_progress') || '{}');
+        const stageBtns = document.querySelectorAll('#stage-grid-20 [data-testid^="stage-btn-"]');
+        const btn2 = document.querySelector('[data-testid="stage-btn-2"]');
+
+        return {
+          status: after.status,
+          stageBtnCount: stageBtns.length,
+          btn2Unlocked: btn2 ? !btn2.disabled : false,
+          bubbleProg,
+          hallProg,
+        };
+      })()"""
+  )
+  assert_true(res["status"] == "cleared", f"Expected stage 1 cleared: {res}")
+  assert_true(res["stageBtnCount"] == 20, f"Expected 20 stage select buttons, got {res['stageBtnCount']}")
+  assert_true(
+      res["btn2Unlocked"] and res["bubbleProg"].get("unlockedStage", 0) >= 2,
+      f"Expected clearing stage 1 to unlock stage 2 in qq_bubble_progress: {res}",
+  )
+  hall = res["hallProg"]
+  assert_true(
+      "kart" in hall and hall["kart"]["plays"] == 3,
+      f"qq_hall_progress overwrote other game keys: {hall}",
+  )
+  bd = hall.get("bubbledragon", {})
+  assert_true(
+      bd.get("plays", 0) >= 1
+      and bd.get("best", 0) > 0
+      and 1 <= bd.get("stars", 0) <= 3
+      and isinstance(bd.get("last"), str)
+      and "T" in bd.get("last", ""),
+      f"Invalid qq_hall_progress['bubbledragon'] entry: {bd}",
+  )
+
+
+def t41_pop_juice_14_particles_ring_shake_semitone_audio_and_slowmo_avalanche(
+    h: BubbleDragonTestHarness,
+) -> None:
+  res = h.eval_js(
+      """(() => {
+        const api = window.__BUBBLE_DRAGON__;
+        // 1) 3-bubble pop + 5-bubble avalanche drop (>= 4 dropped -> slow-mo 0.4s at 0.3x + "雪崩 ×5!")
+        api.startMatch({
+          stageId: 1,
+          customGrid: [
+            [null, null, null, 'red', 'red', null, null, null],
+            [null, 'blue', 'yellow', null, 'green', 'purple', null],
+            [null, 'orange', null, null, null, null, null, null],
+          ],
+          forcedQueue: ['red', 'blue'],
+        });
+        api.setAimAngle(0.0);
+        api.fireBubble();
+        // Step just until impact (projected ~14 frames)
+        let stImpact = api.getState();
+        for (let i = 0; i < 40; i++) {
+          stImpact = api.stepFrames(1);
+          if (stImpact.lastShotResult) break;
+        }
+        const fxDomText = document.getElementById('floating-fx-layer')?.textContent || '';
+
+        // 2) >= 6 bubble pop -> camera shake 0.15 * 1.5 = 0.225
+        api.startMatch({
+          stageId: 1,
+          customGrid: [
+            ['red', 'red', 'red', 'red', 'red', null, null, null],
+            ['red', 'red', null, null, null, null, null],
+          ],
+          forcedQueue: ['red', 'blue'],
+        });
+        api.setAimAngle(-0.25);
+        api.fireBubble();
+        let stBig = api.getState();
+        for (let i = 0; i < 40; i++) {
+          stBig = api.stepFrames(1);
+          if (stBig.lastShotResult) break;
+        }
+
+        return {
+          smallPopCount: stImpact.lastShotResult.poppedCount,
+          droppedCount: stImpact.lastShotResult.droppedCount,
+          burstParticles: stImpact.particles.filter((p) => p.kind === 'burst').length,
+          popRingsCount: stImpact.popRings.length,
+          smallShakeBase: stImpact.cameraShake.baseIntensity,
+          slowMoTriggered: stImpact.lastShotResult.slowMoTriggered,
+          slowMoDuration: stImpact.lastShotResult.slowMoDuration,
+          timeScaleAtImpact: stImpact.timeScale,
+          floatingTexts: stImpact.floatingTexts.map((t) => t.text),
+          fxDomText,
+          bigPopCount: stBig.lastShotResult.poppedCount,
+          bigShakeBase: stBig.cameraShake.baseIntensity,
+          lastPopPitches: stBig.audio.lastPopPitches,
+          lastPopStepMs: stBig.audio.lastPopStepMs,
+        };
+      })()"""
+  )
+  assert_true(
+      res["smallPopCount"] == 3 and res["burstParticles"] == 3 * 14,
+      f"Expected 14 burst particles per popped bubble (42 total), got {res}",
+  )
+  assert_true(res["popRingsCount"] >= 1, f"Expected expanding 3D pop ring, got {res}")
+  assert_true(
+      abs(res["smallShakeBase"] - 0.15) < 1e-6 and abs(res["bigShakeBase"] - 0.225) < 1e-6,
+      f"Expected camera shake 0.15 and 0.225 (x1.5 for >=6 popped), got {res}",
+  )
+  assert_true(
+      res["droppedCount"] == 5
+      and res["slowMoTriggered"] is True
+      and abs(res["slowMoDuration"] - 0.4) < 1e-6
+      and abs(res["timeScaleAtImpact"] - 0.3) < 1e-6,
+      f"Expected 0.4s slow-mo (timeScale 0.3) on >=4 dropped bubbles, got {res}",
+  )
+  assert_true(
+      any("雪崩 ×5!" in t for t in res["floatingTexts"]) and "雪崩 ×5!" in res["fxDomText"],
+      f"Expected '雪崩 ×5!' floating text, got {res}",
+  )
+  pitches = res["lastPopPitches"]
+  assert_true(
+      len(pitches) >= 6
+      and abs(pitches[0] - 523.25) < 0.5
+      and pitches[1] > pitches[0]
+      and res["lastPopStepMs"] == 40,
+      f"Expected C5 + n semitones 40ms apart pitch steps, got pitches={pitches}, stepMs={res['lastPopStepMs']}",
+  )
+
+
+def t42_lose_flow_no_3d_podium_no_next_stage_sad_dragon_vs_perfect_clear(
+    h: BubbleDragonTestHarness,
+) -> None:
+  lose_res = h.eval_js(
+      """(() => {
+        const api = window.__BUBBLE_DRAGON__;
+        const rows = [
+          ['red', null, null, null, null, null, null, null],
+          ['blue', null, null, null, null, null, null],
+          ['yellow', null, null, null, null, null, null, null],
+          ['green', null, null, null, null, null, null],
+          ['purple', null, null, null, null, null, null, null],
+          ['orange', null, null, null, null, null, null],
+          ['red', null, null, null, null, null, null, null],
+          ['blue', null, null, null, null, null, null],
+        ];
+        api.startMatch({
+          stageId: 1,
+          shotsPerCeilingDrop: 1,
+          customGrid: rows,
+          forcedQueue: ['yellow', 'green', 'purple'],
+        });
+        for (let i = 0; i < 3; i++) {
+          if (api.getState().status !== 'playing') break;
+          api.setAimAngle(0.35);
+          api.fireBubble();
+          api.stepFrames(55);
+        }
+        const st = api.getState();
+        const nextBtn = document.querySelector('[data-testid="btn-next-stage"]');
+        const retryBtn = document.querySelector('[data-testid="btn-retry"]');
+        const homeBtn = document.querySelector('[data-testid="btn-home"]');
+        const titleText = document.getElementById('podium-title')?.textContent || '';
+        return {
+          status: st.status,
+          podiumVisible: st.podiumVisible,
+          dragonState: st.crew.dragonState,
+          titleText,
+          nextHidden: nextBtn ? (nextBtn.hidden || window.getComputedStyle(nextBtn).display === 'none') : true,
+          retryPrimary: retryBtn ? retryBtn.classList.contains('primary') : false,
+          homeVisible: homeBtn ? !homeBtn.hidden : false,
+        };
+      })()"""
+  )
+  assert_true(
+      lose_res["status"] == "lost"
+      and lose_res["podiumVisible"] is False
+      and lose_res["dragonState"] == "sad"
+      and "泡泡触及警戒线" in lose_res["titleText"]
+      and lose_res["nextHidden"] is True
+      and lose_res["retryPrimary"] is True
+      and lose_res["homeVisible"] is True,
+      f"Lose flow verification failed: {lose_res}",
+  )
+
+  clear_res = h.eval_js(
+      """(() => {
+        const api = window.__BUBBLE_DRAGON__;
+        api.startMatch({
+          stageId: 1,
+          customGrid: [
+            [null, null, null, 'red', 'red', null, null, null],
+          ],
+          forcedQueue: ['red', 'blue'],
+        });
+        api.setAimAngle(0.0);
+        api.fireBubble();
+        const st = api.stepFrames(55);
+        const nextBtn = document.querySelector('[data-testid="btn-next-stage"]');
+        const stamp = document.getElementById('perfect-stamp');
+        return {
+          status: st.status,
+          isPerfectClear: st.isPerfectClear,
+          podiumStars: st.podiumStars,
+          podiumVisible: st.podiumVisible,
+          nextVisibleAndPrimary: nextBtn ? (!nextBtn.hidden && nextBtn.classList.contains('primary')) : false,
+          stampVisible: stamp ? !stamp.hidden : false,
+        };
+      })()"""
+  )
+  assert_true(
+      clear_res["status"] == "cleared"
+      and clear_res["isPerfectClear"] is True
+      and clear_res["podiumStars"] == 3
+      and clear_res["podiumVisible"] is True
+      and clear_res["nextVisibleAndPrimary"] is True
+      and clear_res["stampVisible"] is True,
+      f"Clear flow / PERFECT stamp verification failed: {clear_res}",
+  )
+
+
+def t43_crew_reactions_cauldron_coin_fountain_combo_cheer_egg_sparkle_and_special_pulse(
+    h: BubbleDragonTestHarness,
+) -> None:
+  res = h.eval_js(
+      """(() => {
+        const api = window.__BUBBLE_DRAGON__;
+        // Two consecutive pops + drop into cauldron + egg rescue
+        api.startMatch({
+          stageId: 3,
+          customGrid: [
+            ['blue', 'blue', null, 'red', 'red', null, 'green', 'green'],
+            [null, null, { color: 'yellow', isEgg: true }, null, null, null, null],
+          ],
+          forcedQueue: ['red', 'blue', 'green'],
+        });
+        // Shot 1: pop red -> drops egg into cauldron!
+        api.setAimAngle(0.0);
+        api.fireBubble();
+        let st1 = api.getState();
+        let sawSparkle = false;
+        let sawCoin = false;
+        for (let i = 0; i < 110; i++) {
+          st1 = api.stepFrames(1);
+          if (st1.particles.some((p) => p.kind === 'sparkle')) sawSparkle = true;
+          if (st1.particles.some((p) => p.kind === 'coin')) sawCoin = true;
+        }
+
+        // Now test combo x2 cheer + special readiness pulse
+        api.startMatch({
+          stageId: 1,
+          customGrid: [
+            ['green', 'green', null, 'red', 'red', null, 'blue', 'blue'],
+          ],
+          forcedQueue: ['red', 'blue', 'green'],
+        });
+        api.setAimAngle(0.0);
+        api.fireBubble();
+        api.stepFrames(35);
+        api.setAimAngle(0.42);
+        api.fireBubble();
+        let stCombo = api.getState();
+        for (let i = 0; i < 35; i++) {
+          stCombo = api.stepFrames(1);
+          if (stCombo.combo >= 2) break;
+        }
+
+        // Charge special to verify pulse on #hud-btn-special
+        api.startMatch({
+          stageId: 1,
+          customGrid: [
+            ['green', null, null, 'red', 'red', null, null, null],
+            [null, 'blue', 'yellow', null, null, null, null],
+            [null, 'purple', 'orange', null, null, null, null, null],
+            ['blue', 'yellow', null, null, null, null, null],
+          ],
+          forcedQueue: ['red', 'green'],
+        });
+        api.setAimAngle(0.0);
+        api.fireBubble();
+        const stSpec = api.stepFrames(55);
+        const specBtn = document.querySelector('[data-testid="hud-btn-special"]');
+
+        return {
+          sawSparkle,
+          sawCoin,
+          dragonJumps: st1.crew.dragonJumps,
+          combo: stCombo.combo,
+          cheers: stCombo.crew.cheers,
+          dragonStateCombo: stCombo.crew.dragonState,
+          penguinStateCombo: stCombo.crew.penguinState,
+          comboTexts: stCombo.floatingTexts.map((t) => t.text),
+          specReadyPulse: specBtn ? (specBtn.classList.contains('is-ready') && specBtn.getAttribute('data-ready') === 'true') : false,
+          readySpecial: stSpec.specialGauge.readySpecial,
+        };
+      })()"""
+  )
+  assert_true(
+      res["sawSparkle"] and res["sawCoin"] and res["dragonJumps"] >= 1,
+      f"Expected egg sparkle, cauldron coin fountain, and dragon jump: {res}",
+  )
+  assert_true(
+      res["combo"] >= 2
+      and res["cheers"] >= 1
+      and res["dragonStateCombo"] == "cheer"
+      and res["penguinStateCombo"] == "cheer"
+      and any("连击 ×2!" in t for t in res["comboTexts"]),
+      f"Expected crew cheer and '连击 ×2!' on combo x2: {res}",
+  )
+  assert_true(
+      res["readySpecial"] is not None and res["specReadyPulse"] is True,
+      f"Expected #hud-btn-special to pulse (.is-ready) when special is ready: {res}",
+  )
+
+
+def t44_greedy_bot_and_random_shooter_skill_targets(
+    h: BubbleDragonTestHarness,
+) -> None:
+  res = h.eval_js(
+      """(async () => {
+        const simMod = await import('./src/sim.js');
+
+        function runGreedyBot(stageId, seed = 20261029 + stageId, maxShots = 50) {
+          const sim = new simMod.BubbleDragonSim({ modeId: 'stage', stageId, seed });
+          while (sim.status === 'playing' && sim.shotsFired < maxShots) {
+            const targetColor = sim.currentBubble.color;
+            let bestAngle = 0;
+            let bestScore = -1e9;
+            for (let deg = -74; deg <= 74; deg += 1) {
+              const rad = deg * Math.PI / 180;
+              const tr = simMod.computeTrajectoryPreview(rad, sim.grid, sim.ceilingY, sim.rowParityOffset);
+              if (!tr.snapCell) continue;
+              const { row, col } = tr.snapCell;
+              if (row < 0 || row >= sim.grid.length || col < 0 || col >= sim.grid[row].length) continue;
+              if (sim.grid[row][col]) continue;
+              sim.grid[row][col] = { row, col, color: targetColor, special: null, isEgg: false, x: tr.snapCell.x, y: tr.snapCell.y };
+              const cluster = simMod.findConnectedColorCluster(sim.grid, [[row, col]], targetColor, sim.rowParityOffset);
+              const clusterSize = cluster.length;
+              let sameColorNeighbors = 0;
+              let totalNeighbors = 0;
+              for (const [nr, nc] of simMod.getHexNeighbors(row, col, sim.grid.length, sim.rowParityOffset)) {
+                const nb = sim.grid[nr][nc];
+                if (nb) {
+                  totalNeighbors++;
+                  if (nb.color === targetColor) sameColorNeighbors++;
+                }
+              }
+              sim.grid[row][col] = null;
+              let score = 0;
+              if (clusterSize >= 3) {
+                score += 1000 + clusterSize * 120 + (12 - row) * 25;
+              } else {
+                score += sameColorNeighbors * 95 + totalNeighbors * 10 - row * 18;
+              }
+              score -= tr.bounces * 4;
+              if (score > bestScore) {
+                bestScore = score;
+                bestAngle = rad;
+              }
+            }
+            sim.setAimAngle(bestAngle);
+            sim.fireBubble();
+            let safety = 0;
+            while ((sim.projectile || sim.fallingBubbles.length > 0) && safety < 240) {
+              sim.stepFrames(1);
+              safety++;
+            }
+          }
+          return { stageId, status: sim.status, shotsFired: sim.shotsFired };
+        }
+
+        function runRandomShooter(stageId, seed = 5100 + stageId * 17, maxShots = 65) {
+          const sim = new simMod.BubbleDragonSim({ modeId: 'stage', stageId, seed });
+          let rng = seed ^ 0x9e3779b9;
+          const nextRand = () => {
+            rng = (Math.imul(rng, 1664525) + 1013904223) >>> 0;
+            return rng / 0x100000000;
+          };
+          while (sim.status === 'playing' && sim.shotsFired < maxShots) {
+            const angle = (nextRand() * 2 - 1) * (simMod.MAX_AIM_RAD * 0.92);
+            sim.setAimAngle(angle);
+            sim.fireBubble();
+            let safety = 0;
+            while ((sim.projectile || sim.fallingBubbles.length > 0) && safety < 240) {
+              sim.stepFrames(1);
+              safety++;
+            }
+          }
+          return { status: sim.status, shotsFired: sim.shotsFired };
+        }
+
+        const stages = [];
+        for (const def of simMod.STAGE_DEFS) {
+          const g = runGreedyBot(def.id);
+          const r = runRandomShooter(def.id);
+          stages.push({
+            id: def.id,
+            par: def.parShots,
+            greedyStatus: g.status,
+            greedyShots: g.shotsFired,
+            greedyRatio: Number((g.shotsFired / def.parShots).toFixed(2)),
+            randStatus: r.status,
+            randShots: r.shotsFired,
+          });
+        }
+        return { stages };
+      })()"""
+  )
+  for st in res["stages"]:
+    sid = st["id"]
+    par = st["par"]
+    assert_true(
+        st["greedyStatus"] == "cleared"
+        and par * 0.6 <= st["greedyShots"] <= par * 1.3
+        and (st["greedyShots"] <= 12 if sid == 1 else True),
+        f"Expected greedy bot on Stage {sid} in [0.6*par, 1.3*par] (and <=12 on Stage 1), got {st}",
+    )
+    min_rand = 14 if sid == 1 else (10 if sid <= 12 else 7)
+    assert_true(
+        st["randStatus"] == "lost" and min_rand <= st["randShots"] <= 60,
+        f"Expected random shooter on Stage {sid} to survive >={min_rand} and lose <=60, got {st}",
+    )
+
+
+def t45_v2_director_polish_verifications(h: BubbleDragonTestHarness) -> None:
+  # 1. Verify color ramp (1-3: 3, 4-8: 4, 9-14: 5, 15-20: 6), row 0 full, <=35% single-pop detachment,
+  #    and egg placement (row >= 3, >= 5 non-egg neighbors in >= 2 distinct colors).
+  stage_audit = h.eval_js(
+      """(async () => {
+        const simMod = await import('./src/sim.js');
+        const results = [];
+        for (const def of simMod.STAGE_DEFS) {
+          const baseSim = new simMod.BubbleDragonSim({ modeId: 'stage', stageId: def.id, seed: 20261029 + def.id });
+          const initialCount = baseSim.getOccupiedBubbleCount();
+          let maxDetached = 0;
+          for (const color of simMod.BUBBLE_COLORS) {
+            for (let deg = -74; deg <= 74; deg += 2) {
+              const rad = deg * Math.PI / 180;
+              const tr = simMod.computeTrajectoryPreview(rad, baseSim.grid, baseSim.ceilingY, baseSim.rowParityOffset);
+              if (!tr.snapCell) continue;
+              const { row, col } = tr.snapCell;
+              if (row < 0 || row >= baseSim.grid.length || col < 0 || col >= baseSim.grid[row].length) continue;
+              if (baseSim.grid[row][col]) continue;
+              const g = baseSim.grid.map((r) => r.map((c) => (c ? { ...c } : null)));
+              g[row][col] = { row, col, color, special: null, isEgg: false, x: tr.snapCell.x, y: tr.snapCell.y };
+              const cluster = simMod.findConnectedColorCluster(g, [[row, col]], color, baseSim.rowParityOffset);
+              if (cluster.length >= 3) {
+                for (const item of cluster) g[item.row][item.col] = null;
+                const dropped = simMod.findFloatingDisconnectedCells(g, baseSim.rowParityOffset);
+                if (dropped.length > maxDetached) maxDetached = dropped.length;
+              }
+            }
+          }
+          const eggs = [];
+          for (let r = 0; r < baseSim.grid.length; r++) {
+            for (let c = 0; c < baseSim.grid[r].length; c++) {
+              const cell = baseSim.grid[r][c];
+              if (cell && cell.isEgg) {
+                let nonEggNeighbors = 0;
+                const colors = new Set();
+                for (const [nr, nc] of simMod.getHexNeighbors(r, c, baseSim.grid.length, 0)) {
+                  const nb = baseSim.grid[nr][nc];
+                  if (nb && !nb.isEgg) {
+                    nonEggNeighbors += 1;
+                    colors.add(nb.color);
+                  }
+                }
+                eggs.push({ row: r, col: c, nonEggNeighbors, distinctColors: colors.size });
+              }
+            }
+          }
+          results.push({
+            id: def.id,
+            colorsCount: def.colors.length,
+            row0Full: def.rows[0].length === 8 && def.rows[0].every((c) => c !== null),
+            maxDetachedPct: Number(((maxDetached / Math.max(1, initialCount)) * 100).toFixed(1)),
+            eggs,
+          });
+        }
+        return results;
+      })()"""
+  )
+  for item in stage_audit:
+    sid = item["id"]
+    expected_colors = 3 if sid <= 3 else (4 if sid <= 8 else (5 if sid <= 14 else 6))
+    assert_true(
+        item["colorsCount"] == expected_colors,
+        f"Stage {sid} expected {expected_colors} colors, got {item}",
+    )
+    assert_true(item["row0Full"] is True, f"Stage {sid} row 0 must be 100% filled: {item}")
+    if sid >= 9:
+      assert_true(
+          item["maxDetachedPct"] <= 35.0,
+          f"Stage {sid} max single-pop detachment must be <=35%, got {item}",
+      )
+    for egg in item["eggs"]:
+      assert_true(
+          egg["row"] >= 3 and egg["nonEggNeighbors"] >= 5 and egg["distinctColors"] >= 2,
+          f"Stage {sid} egg must be at row>=3 with >=5 non-egg neighbors in >=2 colors, got {egg}",
+      )
+
+  # 2. Verify stage-select grid dimensions (>=52x44px, 2x10 at >=1024w, 4x5 narrower, hidden <440h, zero scroll)
+  for w, vh, expected_cols, expected_visible in [
+      (1280, 800, 10, True),
+      (1024, 768, 10, True),
+      (390, 844, 4, True),
+      (844, 390, 0, False),
+  ]:
+    h.set_viewport(w, vh, mobile=(w < 900), touch=(w < 900))
+    grid_res = h.eval_js(
+        """(() => {
+          document.getElementById('hud-btn-menu').click();
+          const grid = document.getElementById('stage-grid-20');
+          const style = window.getComputedStyle(grid);
+          const visible = style.display !== 'none' && style.visibility !== 'hidden';
+          const cells = Array.from(grid.querySelectorAll('.stage-cell'));
+          const rects = cells.map((c) => c.getBoundingClientRect());
+          const minW = rects.length ? Math.min(...rects.map((r) => r.width)) : 0;
+          const minH = rects.length ? Math.min(...rects.map((r) => r.height)) : 0;
+          const xs = new Set(rects.map((r) => Math.round(r.left)));
+          const ys = new Set(rects.map((r) => Math.round(r.top)));
+          const doc = document.documentElement;
+          const zeroScroll = doc.scrollWidth <= window.innerWidth && doc.scrollHeight <= window.innerHeight;
+          const prevRect = document.getElementById('btn-stage-prev').getBoundingClientRect();
+          const nextRect = document.getElementById('btn-stage-next').getBoundingClientRect();
+          return { visible, minW, minH, colCount: xs.size, rowCount: ys.size, zeroScroll, prevW: prevRect.width, nextW: nextRect.width };
+        })()"""
+    )
+    assert_true(grid_res["zeroScroll"] is True, f"Stage select overlay scrolled at {w}x{vh}: {grid_res}")
+    assert_true(
+        grid_res["visible"] == expected_visible,
+        f"Stage grid visibility mismatch at {w}x{vh}: {grid_res}",
+    )
+    if expected_visible:
+      assert_true(
+          grid_res["minW"] >= 51.5 and grid_res["minH"] >= 43.5 and grid_res["colCount"] == expected_cols,
+          f"Expected stage cells >=52x44px and {expected_cols} columns at {w}x{vh}, got {grid_res}",
+      )
+    else:
+      assert_true(
+          grid_res["prevW"] >= 44 and grid_res["nextW"] >= 44,
+          f"Expected ◀ ▶ navigation buttons visible when grid hidden at {w}x{vh}: {grid_res}",
+      )
+
+  h.set_viewport(1280, 800, mobile=False, touch=False)
+
+  # 3. Verify floating texts replace same kind (no collision), spawn at pop location,
+  #    board empty on clear (leftovers drop as bonus), Stage 20 "♾️ 挑战无尽" button, and "下一个:<色>" label.
+  polish_res = h.eval_js(
+      """(() => {
+        const api = window.__BUBBLE_DRAGON__;
+
+        // Check HUD swap label "下一个:<色>"
+        const stInit = api.startMatch({
+          stageId: 1,
+          customGrid: [
+            ['red', 'red', 'blue', 'blue', 'yellow', 'yellow', 'red', 'red'],
+          ],
+          forcedQueue: ['red', 'yellow', 'blue'],
+        });
+        const swapLabelText = document.getElementById('hud-swap-label')?.textContent || '';
+
+        // Pop left-side cluster and trigger avalanche + combo at pop location (x < -1.0)
+        api.startMatch({
+          stageId: 1,
+          customGrid: [
+            [null, 'red', 'red', null, null, null, 'blue', 'blue'],
+            ['yellow', 'blue', null, null, null, null, null],
+            ['green', 'purple', null, null, null, null, null, null],
+          ],
+          forcedQueue: ['red', 'blue'],
+        });
+        api.setAimAngle(-0.14);
+        api.fireBubble();
+        let stPop = api.getState();
+        let avalancheText = null;
+        for (let i = 0; i < 45; i++) {
+          stPop = api.stepFrames(1);
+          const av = stPop.floatingTexts.find((t) => t.kind === 'avalanche');
+          if (av) {
+            avalancheText = av;
+            break;
+          }
+        }
+
+        // Verify clearing an egg_rescue stage with leftover top bubbles leaves board 100% empty
+        api.startMatch({
+          stageId: 20,
+          customGrid: [
+            ['red', 'red', 'blue', 'blue', 'yellow', 'yellow', 'green', 'green'],
+            ['blue', 'blue', 'yellow', { color: 'red', isEgg: true }, 'red', 'green', 'blue'],
+          ],
+          forcedQueue: ['red', 'blue'],
+        });
+        api.setAimAngle(0.0);
+        api.fireBubble();
+        const stClear20 = api.stepFrames(55);
+        const nextBtnText20 = document.getElementById('btn-next-stage')?.textContent || '';
+        document.getElementById('btn-next-stage')?.click();
+        const stAfterClickEndless = api.getState();
+
+        return {
+          swapLabelText,
+          expectedNextColor: stInit.nextBubble.color,
+          avalancheText,
+          floatingSameKindCount: stPop.floatingTexts.filter((t) => t.kind === 'avalanche').length,
+          clear20Status: stClear20.status,
+          clear20BubbleCount: stClear20.bubbleCount,
+          clear20BubblesLen: stClear20.bubbles.length,
+          clear20FallingLen: stClear20.fallingBubbles.length,
+          nextBtnText20,
+          modeAfterClick20: stAfterClickEndless.modeId,
+        };
+      })()"""
+  )
+  assert_true(
+      polish_res["swapLabelText"].startswith("下一个:"),
+      f"Expected #hud-swap-label to start with '下一个:', got {polish_res}",
+  )
+  assert_true(
+      polish_res["avalancheText"] is not None
+      and polish_res["avalancheText"]["x"] < -1.0
+      and polish_res["floatingSameKindCount"] == 1,
+      f"Expected avalanche floating text at left pop location (x < -1.0) with no duplicate kind: {polish_res}",
+  )
+  assert_true(
+      polish_res["clear20Status"] == "cleared"
+      and polish_res["clear20BubbleCount"] == 0
+      and polish_res["clear20BubblesLen"] == 0
+      and polish_res["clear20FallingLen"] == 0,
+      f"Expected board and fallingBubbles to be 100% empty on stage clear: {polish_res}",
+  )
+  assert_true(
+      polish_res["nextBtnText20"] == "♾️ 挑战无尽" and polish_res["modeAfterClick20"] == "endless",
+      f"Expected Stage 20 clear button '♾️ 挑战无尽' to launch endless mode: {polish_res}",
+  )
+
+
 ALL_TESTS: list[tuple[str, Callable[[BubbleDragonTestHarness], None]]] = [
     ("T01_safari_zero_importmap_and_zero_bare_specifiers", t01_safari_zero_importmap_and_zero_bare_specifiers),
     ("T02_subpath_hosting_zero_404s", t02_subpath_hosting_zero_404s),
@@ -1183,6 +1944,14 @@ ALL_TESTS: list[tuple[str, Callable[[BubbleDragonTestHarness], None]]] = [
     ("T35_ui_special_button_and_keye_gated_and_preserves_feeder", t35_ui_special_button_and_keye_gated_and_preserves_feeder),
     ("T36_fixed_timestep_accumulator_holds_60_ticks_per_sec", t36_fixed_timestep_accumulator_holds_60_ticks_per_sec),
     ("T37_endless_row_feed_preserves_world_x_and_zero_cell_loss", t37_endless_row_feed_preserves_world_x_and_zero_cell_loss),
+    ("T38_playfield_geometry_camera_framing_and_bubble_diameter", t38_playfield_geometry_camera_framing_and_bubble_diameter),
+    ("T39_twenty_stages_seeded_template_determinism_and_endless_6rows", t39_twenty_stages_seeded_template_determinism_and_endless_6rows),
+    ("T40_stage_select_20_unlock_persistence_and_qq_hall_progress", t40_stage_select_20_unlock_persistence_and_qq_hall_progress),
+    ("T41_pop_juice_14_particles_ring_shake_semitone_audio_and_slowmo_avalanche", t41_pop_juice_14_particles_ring_shake_semitone_audio_and_slowmo_avalanche),
+    ("T42_lose_flow_no_3d_podium_no_next_stage_sad_dragon_vs_perfect_clear", t42_lose_flow_no_3d_podium_no_next_stage_sad_dragon_vs_perfect_clear),
+    ("T43_crew_reactions_cauldron_coin_fountain_combo_cheer_egg_sparkle_and_special_pulse", t43_crew_reactions_cauldron_coin_fountain_combo_cheer_egg_sparkle_and_special_pulse),
+    ("T44_greedy_bot_and_random_shooter_skill_targets", t44_greedy_bot_and_random_shooter_skill_targets),
+    ("T45_v2_director_polish_verifications", t45_v2_director_polish_verifications),
 ]
 
 

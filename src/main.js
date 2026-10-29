@@ -1,7 +1,8 @@
 /**
  * QQ Bubble Dragon Shooter 3D (QQ泡泡龙 3D)
  * Main Application Controller, Touch/Pointer 1:1 Drag-to-Aim + Release-to-Shoot,
- * Keyboard Controls, Fixed-Step 60Hz Loop, HUD Sync & Frozen window.__BUBBLE_DRAGON__ Test Seam.
+ * Keyboard Controls, Fixed-Step 60Hz Loop, 20-Stage Unlock & Hall Progress Persistence,
+ * Floating Callout FX, HUD Sync & Frozen window.__BUBBLE_DRAGON__ Test Seam.
  */
 
 import {
@@ -10,17 +11,25 @@ import {
   FIXED_DT,
   LAUNCHER_X,
   LAUNCHER_Y,
+  LEFT_WALL_X,
+  RIGHT_WALL_X,
+  BASE_CEILING_Y,
+  CAULDRON_Y,
   clampAimAngle,
   MAX_AIM_RAD,
 } from './sim.js';
 import { BubbleDragonAudio } from './audio.js';
 import { BubbleDragonRenderer3D } from './renderer3d.js';
 
+const PROGRESS_STORAGE_KEY = 'qq_bubble_progress';
+const HALL_STORAGE_KEY = 'qq_hall_progress';
+
 const canvas = document.getElementById('game-canvas');
 const hudStageLabel = document.getElementById('hud-stage-label');
 const hudScoreLabel = document.getElementById('hud-score-label');
 const hudComboLabel = document.getElementById('hud-combo-label');
 const hudRemainingLabel = document.getElementById('hud-remaining-label');
+const floatingFxLayer = document.getElementById('floating-fx-layer');
 
 const btnMenu = document.getElementById('hud-btn-menu');
 const btnAudio = document.getElementById('hud-btn-audio');
@@ -35,6 +44,8 @@ const btnFire = document.getElementById('hud-btn-fire');
 const titleOverlay = document.getElementById('title-overlay');
 const selectStageName = document.getElementById('select-stage-name');
 const selectStageDesc = document.getElementById('select-stage-desc');
+const selectStageStars = document.getElementById('select-stage-stars');
+const stageGrid20 = document.getElementById('stage-grid-20');
 const btnStagePrev = document.getElementById('btn-stage-prev');
 const btnStageNext = document.getElementById('btn-stage-next');
 const btnStartStage = document.getElementById('btn-start-stage');
@@ -42,6 +53,7 @@ const btnStartEndless = document.getElementById('btn-start-endless');
 
 const podiumOverlay = document.getElementById('podium-overlay');
 const podiumBadge = document.getElementById('podium-badge');
+const perfectStamp = document.getElementById('perfect-stamp');
 const podiumTitle = document.getElementById('podium-title');
 const podiumStars = document.getElementById('podium-stars');
 const podiumSummary = document.getElementById('podium-summary');
@@ -67,13 +79,105 @@ window.addEventListener('unhandledrejection', (ev) => {
   errorTracker.unhandledRejections.push(String(ev?.reason || 'rejection'));
 });
 
+// Tolerant localStorage helpers for qq_bubble_progress & qq_hall_progress
+let memoryProgressFallback = {
+  unlockedStage: 1,
+  stageStars: {},
+  bestScores: {},
+};
+
+function loadBubbleProgress() {
+  try {
+    const raw = window.localStorage.getItem(PROGRESS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const unlockedStage = Math.max(
+          1,
+          Math.min(STAGE_DEFS.length, Math.floor(Number(parsed.unlockedStage) || 1))
+        );
+        const stageStars =
+          parsed.stageStars && typeof parsed.stageStars === 'object' ? { ...parsed.stageStars } : {};
+        const bestScores =
+          parsed.bestScores && typeof parsed.bestScores === 'object' ? { ...parsed.bestScores } : {};
+        memoryProgressFallback = { unlockedStage, stageStars, bestScores };
+        return memoryProgressFallback;
+      }
+    }
+  } catch (_) {}
+  return {
+    unlockedStage: memoryProgressFallback.unlockedStage || 1,
+    stageStars: { ...memoryProgressFallback.stageStars },
+    bestScores: { ...memoryProgressFallback.bestScores },
+  };
+}
+
+function saveBubbleProgress(prog) {
+  const clean = {
+    unlockedStage: Math.max(1, Math.min(STAGE_DEFS.length, Math.floor(Number(prog.unlockedStage) || 1))),
+    stageStars: { ...(prog.stageStars || {}) },
+    bestScores: { ...(prog.bestScores || {}) },
+  };
+  memoryProgressFallback = clean;
+  try {
+    window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(clean));
+  } catch (_) {}
+  return clean;
+}
+
+function recordMatchEndPersistence(state) {
+  // 1. Update qq_bubble_progress when clearing a stage
+  const prog = loadBubbleProgress();
+  if (state.modeId === 'stage') {
+    const stKey = String(state.stageId);
+    prog.bestScores[stKey] = Math.max(Number(prog.bestScores[stKey]) || 0, Number(state.score) || 0);
+    if (state.status === 'cleared') {
+      const prevStars = Number(prog.stageStars[stKey]) || 0;
+      prog.stageStars[stKey] = Math.max(prevStars, Math.max(1, Number(state.podiumStars) || 1));
+      prog.unlockedStage = Math.max(
+        prog.unlockedStage,
+        Math.min(STAGE_DEFS.length, Number(state.stageId) + 1)
+      );
+    }
+    saveBubbleProgress(prog);
+    updateStageSelectCard();
+  }
+
+  // 2. Merge-write localStorage['qq_hall_progress'] under gameId = 'bubbledragon'
+  try {
+    let hall = {};
+    const rawHall = window.localStorage.getItem(HALL_STORAGE_KEY);
+    if (rawHall) {
+      const parsedHall = JSON.parse(rawHall);
+      if (parsedHall && typeof parsedHall === 'object' && !Array.isArray(parsedHall)) {
+        hall = { ...parsedHall };
+      }
+    }
+    const prevEntry =
+      hall.bubbledragon && typeof hall.bubbledragon === 'object'
+        ? hall.bubbledragon
+        : { plays: 0, best: 0, stars: 0 };
+    hall.bubbledragon = {
+      plays: (Number(prevEntry.plays) || 0) + 1,
+      best: Math.max(Number(prevEntry.best) || 0, Number(state.score) || 0),
+      stars: Math.max(
+        0,
+        Math.min(3, Math.max(Number(prevEntry.stars) || 0, Number(state.podiumStars) || 0))
+      ),
+      last: new Date().toISOString(),
+    };
+    window.localStorage.setItem(HALL_STORAGE_KEY, JSON.stringify(hall));
+  } catch (_) {}
+}
+
 const sim = new BubbleDragonSim({ stageId: 1, modeId: 'stage', seed: 20261029 });
 const audio = new BubbleDragonAudio();
 const renderer3d = new BubbleDragonRenderer3D(canvas);
 
 let uiScreen = 'playing'; // 'playing' | 'title' | 'podium'
 let selectedStageId = 1;
-const AIM_SPEED_RAD_PER_SEC = 1.68; // ~0.028 rad per 1/60s tick
+let lastRecordedMatchStatus = 'playing';
+const AIM_SPEED_RAD_PER_SEC = 1.68;
 
 const keysHeld = new Set();
 let pointerAiming = false;
@@ -113,14 +217,26 @@ function processSimAudioEvents() {
       case 'special_explode':
         audio.playSpecial(ev.special);
         break;
+      case 'special_not_ready':
+        audio.playSpecialNotReady();
+        break;
       case 'cluster_pop':
         audio.playClusterPop(ev.poppedCount, ev.droppedCount, ev.combo);
+        break;
+      case 'avalanche':
+        audio.playAvalanche(ev.droppedCount);
+        break;
+      case 'combo_cheer':
+        audio.playComboCheer(ev.combo);
+        break;
+      case 'egg_rescue':
+        audio.playEggRescue();
         break;
       case 'cauldron_catch':
         audio.playCauldronCatch(ev.points);
         break;
       case 'stage_clear':
-        audio.playStageClear();
+        audio.playStageClear(Boolean(ev.perfect));
         break;
       case 'danger_breach':
         audio.playGameOver();
@@ -132,12 +248,102 @@ function processSimAudioEvents() {
 }
 
 function updateStageSelectCard() {
+  const prog = loadBubbleProgress();
   const def = STAGE_DEFS[Math.max(0, Math.min(STAGE_DEFS.length - 1, selectedStageId - 1))];
+  const isUnlocked = selectedStageId <= prog.unlockedStage;
+  const stStars = Math.max(0, Math.min(3, Number(prog.stageStars[String(selectedStageId)]) || 0));
+  const starStr = '★'.repeat(stStars) + '☆'.repeat(3 - stStars);
+
   selectStageName.textContent = def.name;
   selectStageDesc.textContent = def.subtitle;
+  selectStageStars.textContent = isUnlocked
+    ? `${starStr} · 已解锁 (${selectedStageId}/${STAGE_DEFS.length})`
+    : `🔒 未解锁 · 通关第${selectedStageId - 1}关解锁 (${selectedStageId}/${STAGE_DEFS.length})`;
+
+  if (btnStartStage) {
+    btnStartStage.disabled = !isUnlocked;
+    btnStartStage.textContent = isUnlocked ? '🎯 开始闯关' : '🔒 待解锁';
+  }
+
+  if (stageGrid20) {
+    stageGrid20.innerHTML = '';
+    for (let i = 1; i <= STAGE_DEFS.length; i++) {
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      const unlocked = i <= prog.unlockedStage;
+      const sCount = Math.max(0, Math.min(3, Number(prog.stageStars[String(i)]) || 0));
+      cell.className =
+        'stage-cell' +
+        (i === selectedStageId ? ' is-selected' : '') +
+        (!unlocked ? ' is-locked' : '');
+      cell.disabled = !unlocked;
+      cell.setAttribute('data-stage-cell', String(i));
+      cell.setAttribute('data-testid', `stage-btn-${i}`);
+      const numSpan = document.createElement('span');
+      numSpan.textContent = `${i}`;
+      const starSpan = document.createElement('span');
+      starSpan.className = 'sc-stars';
+      starSpan.textContent = unlocked ? '★'.repeat(sCount) + '☆'.repeat(3 - sCount) : '🔒';
+      cell.appendChild(numSpan);
+      cell.appendChild(starSpan);
+      cell.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        audio.unlock();
+        selectedStageId = i;
+        updateStageSelectCard();
+        audio.playSwap();
+      });
+      stageGrid20.appendChild(cell);
+    }
+  }
+}
+
+function syncFloatingTextsDOM(state) {
+  if (!floatingFxLayer) return;
+  if (uiScreen === 'title') {
+    floatingFxLayer.hidden = true;
+    if (floatingFxLayer.childElementCount > 0) {
+      floatingFxLayer.innerHTML = '';
+    }
+    return;
+  }
+  floatingFxLayer.hidden = false;
+  const texts = state.floatingTexts || [];
+  if (texts.length === 0) {
+    if (floatingFxLayer.childElementCount > 0) {
+      floatingFxLayer.innerHTML = '';
+    }
+    return;
+  }
+  floatingFxLayer.innerHTML = '';
+  const usedYPositions = [];
+  for (const ft of texts) {
+    const el = document.createElement('div');
+    el.className = `floating-callout kind-${ft.kind || 'info'}`;
+    el.setAttribute('data-testid', `floating-text-${ft.kind || 'info'}`);
+    el.textContent = ft.text;
+    const xPct = Math.max(18, Math.min(82, ((ft.x - LEFT_WALL_X) / (RIGHT_WALL_X - LEFT_WALL_X)) * 60 + 20));
+    let yPct = Math.max(15, Math.min(76, ((BASE_CEILING_Y - ft.y) / (BASE_CEILING_Y - CAULDRON_Y)) * 68 + 14));
+    for (const prevY of usedYPositions) {
+      if (Math.abs(yPct - prevY) < 11.5) {
+        yPct = prevY < 32 ? Math.min(78, prevY + 12.0) : Math.max(14, prevY - 12.0);
+      }
+    }
+    usedYPositions.push(yPct);
+    el.style.left = `${xPct.toFixed(1)}%`;
+    el.style.top = `${yPct.toFixed(1)}%`;
+    floatingFxLayer.appendChild(el);
+  }
 }
 
 function syncUI(state) {
+  if (state.status !== lastRecordedMatchStatus) {
+    if (state.status === 'cleared' || state.status === 'lost') {
+      recordMatchEndPersistence(state);
+    }
+    lastRecordedMatchStatus = state.status;
+  }
+
   if (uiScreen === 'playing' && (state.status === 'cleared' || state.status === 'lost')) {
     uiScreen = 'podium';
   }
@@ -158,14 +364,19 @@ function syncUI(state) {
   hudRemainingLabel.textContent = String(state.bubbleCount);
 
   const nextCol = state.nextBubble ? COLOR_CN[state.nextBubble.color] || '球' : '球';
-  hudSwapLabel.textContent = `换:${nextCol}`;
+  hudSwapLabel.textContent = `下一个:${nextCol}`;
 
   const curSpecial = state.currentBubble?.special;
   const readySpecial = state.specialGauge?.readySpecial;
   const inv = state.specialGauge?.inventory || {};
   const invSpec = ['bomb', 'rainbow', 'lightning'].find((k) => (inv[k] || 0) > 0);
   const activeSpec = curSpecial || readySpecial || invSpec;
-  if (activeSpec && SPECIAL_META[activeSpec]) {
+  const isSpecialReady = Boolean(activeSpec && SPECIAL_META[activeSpec]);
+
+  btnSpecial.classList.toggle('is-ready', isSpecialReady);
+  btnSpecial.setAttribute('data-ready', isSpecialReady ? 'true' : 'false');
+
+  if (isSpecialReady) {
     hudSpecialIcon.textContent = SPECIAL_META[activeSpec].icon;
     hudSpecialLabel.textContent = SPECIAL_META[activeSpec].label;
   } else if (state.specialGauge?.hint) {
@@ -178,17 +389,35 @@ function syncUI(state) {
 
   hudAudioIcon.textContent = audio.muted ? '🔇' : '🔊';
 
+  syncFloatingTextsDOM(state);
+
   if (uiScreen === 'podium') {
     const won = state.status === 'cleared';
-    podiumBadge.textContent = won ? '3D STAR PODIUM · 闯关成功' : 'TRY AGAIN · 再接再厉';
+    podiumBadge.textContent = won ? 'STAGE CLEAR · 闯关成功' : 'DANGER BREACH · 闯关失败';
     podiumTitle.textContent = won
       ? `🎉 ${state.stageName} 过关！`
-      : state.modeId === 'endless'
-      ? '🏆 无尽挑战结算'
-      : '💫 泡泡触及警戒线！';
+      : '😢 泡泡触及警戒线！';
+
+    if (perfectStamp) {
+      perfectStamp.hidden = !(won && state.isPerfectClear);
+    }
+
     const stars = Math.max(0, Math.min(3, state.podiumStars || 0));
+    podiumStars.hidden = !won && state.modeId !== 'endless';
     podiumStars.textContent = '★'.repeat(stars) + '☆'.repeat(3 - stars);
     podiumSummary.textContent = `总分 ${state.score} · 消除 ${state.totalPopped} · 聚宝盆掉落 +${state.cauldronScore}`;
+
+    // Requirement D & v2 Item 5: On LOSE, NO 下一关 button; on Stage 20 CLEAR, replace 下一关 with "♾️ 挑战无尽"
+    btnNextStage.hidden = !won;
+    if (won) {
+      if (state.modeId === 'stage' && state.stageId >= STAGE_DEFS.length) {
+        btnNextStage.textContent = '♾️ 挑战无尽';
+      } else {
+        btnNextStage.textContent = '⏭️ 下一关';
+      }
+    }
+    btnRetry.className = won ? 'big-action-btn secondary' : 'big-action-btn primary';
+    btnNextStage.className = 'big-action-btn primary';
   }
 }
 
@@ -308,8 +537,14 @@ btnStageNext.addEventListener('click', () => {
 });
 
 btnStartStage.addEventListener('click', () => {
+  const prog = loadBubbleProgress();
+  if (selectedStageId > prog.unlockedStage) {
+    audio.playSpecialNotReady();
+    return;
+  }
   audio.unlock();
   uiScreen = 'playing';
+  lastRecordedMatchStatus = 'playing';
   sim.startMatch({ modeId: 'stage', stageId: selectedStageId, seed: 20261029 + selectedStageId });
   renderAll();
 });
@@ -317,6 +552,7 @@ btnStartStage.addEventListener('click', () => {
 btnStartEndless.addEventListener('click', () => {
   audio.unlock();
   uiScreen = 'playing';
+  lastRecordedMatchStatus = 'playing';
   sim.startMatch({ modeId: 'endless', stageId: 1, seed: 20261029 });
   renderAll();
 });
@@ -325,16 +561,23 @@ btnStartEndless.addEventListener('click', () => {
 btnRetry.addEventListener('click', () => {
   audio.unlock();
   uiScreen = 'playing';
+  lastRecordedMatchStatus = 'playing';
   sim.startMatch({ modeId: sim.modeId, stageId: sim.stageId, seed: sim.seed + 1 });
   renderAll();
 });
 
 btnNextStage.addEventListener('click', () => {
+  if (sim.status !== 'cleared') return;
   audio.unlock();
   uiScreen = 'playing';
-  const nextId = sim.modeId === 'stage' ? (sim.stageId % STAGE_DEFS.length) + 1 : 1;
-  selectedStageId = nextId;
-  sim.startMatch({ modeId: sim.modeId, stageId: nextId, seed: 20261029 + nextId });
+  lastRecordedMatchStatus = 'playing';
+  if (sim.modeId === 'stage' && sim.stageId >= STAGE_DEFS.length) {
+    sim.startMatch({ modeId: 'endless', stageId: 1, seed: 20261029 });
+  } else {
+    const nextId = sim.modeId === 'stage' ? (sim.stageId % STAGE_DEFS.length) + 1 : 1;
+    selectedStageId = nextId;
+    sim.startMatch({ modeId: sim.modeId, stageId: nextId, seed: 20261029 + nextId });
+  }
   renderAll();
 });
 
@@ -385,7 +628,11 @@ window.addEventListener('keydown', (ev) => {
   } else if (uiScreen === 'podium') {
     if (ev.code === 'Enter' || ev.code === 'Space') {
       ev.preventDefault();
-      btnNextStage.click();
+      if (!btnNextStage.hidden) {
+        btnNextStage.click();
+      } else {
+        btnRetry.click();
+      }
     }
   }
 
@@ -406,10 +653,16 @@ window.addEventListener('resize', () => {
 
 function buildFullSnapshot() {
   const simState = sim.getState();
+  const progress = loadBubbleProgress();
+  const chamberMetrics = renderer3d.getChamberScreenMetrics();
   const payload = {
     ...simState,
     uiScreen,
     selectedStageId,
+    progress,
+    chamberMetrics,
+    chamberScreenMetrics: chamberMetrics,
+    podiumVisible: Boolean(renderer3d.podiumGroup?.visible),
     maxAimRad: MAX_AIM_RAD,
     webgl2: Boolean(canvas.getContext('webgl2')),
     audio: audio.getState(),
@@ -427,6 +680,7 @@ function buildFullSnapshot() {
 const bubbleDragonApi = Object.freeze({
   startMatch(opts = {}) {
     uiScreen = opts.uiScreen || 'playing';
+    lastRecordedMatchStatus = 'playing';
     if (opts.stageId) {
       selectedStageId = Math.max(1, Math.min(STAGE_DEFS.length, Number(opts.stageId) || 1));
     }
@@ -488,15 +742,17 @@ function animateFrame(now) {
   const rawDt = Math.max(0, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
 
-  if (uiScreen === 'playing') {
+  if (uiScreen === 'playing' || uiScreen === 'podium') {
     simAccumulator += Math.min(0.25, rawDt);
     let stepped = false;
     while (simAccumulator >= FIXED_DT) {
-      if (keysHeld.has('ArrowLeft') || keysHeld.has('KeyA')) {
-        sim.setAimAngle(sim.aimAngle - AIM_SPEED_RAD_PER_SEC * FIXED_DT);
-      }
-      if (keysHeld.has('ArrowRight') || keysHeld.has('KeyD')) {
-        sim.setAimAngle(sim.aimAngle + AIM_SPEED_RAD_PER_SEC * FIXED_DT);
+      if (uiScreen === 'playing') {
+        if (keysHeld.has('ArrowLeft') || keysHeld.has('KeyA')) {
+          sim.setAimAngle(sim.aimAngle - AIM_SPEED_RAD_PER_SEC * FIXED_DT);
+        }
+        if (keysHeld.has('ArrowRight') || keysHeld.has('KeyD')) {
+          sim.setAimAngle(sim.aimAngle + AIM_SPEED_RAD_PER_SEC * FIXED_DT);
+        }
       }
       sim._stepSingleFrame();
       simAccumulator -= FIXED_DT;

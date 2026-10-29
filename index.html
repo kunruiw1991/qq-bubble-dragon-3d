@@ -45,12 +45,12 @@
       z-index: 10;
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 6px 16px;
+      gap: 12px;
+      padding: 6px 18px;
       border-radius: 999px;
-      background: rgba(15, 40, 78, 0.82);
-      border: 2px solid rgba(253, 224, 71, 0.75);
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+      background: rgba(15, 40, 78, 0.86);
+      border: 2px solid rgba(253, 224, 71, 0.82);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
       pointer-events: none;
       white-space: nowrap;
       max-width: calc(100vw - 180px);
@@ -61,18 +61,56 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      font-size: 14px;
-      font-weight: 800;
+      font-size: 15px;
+      font-weight: 900;
       color: #fef08a;
-      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
     }
 
     .status-chip span.val {
       color: #ffffff;
-      font-size: 15px;
+      font-size: 16px;
     }
 
-    /* Active Gameplay Corner Controls (<= 5 buttons total, each 72x72px >= 68x68px!) */
+    /* Non-interactive Floating FX Callout Layer (Avalanche, Combo, Perfect, Egg Rescue) */
+    #floating-fx-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 15;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .floating-callout {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      font-size: clamp(26px, 4.2vw, 44px);
+      font-weight: 900;
+      letter-spacing: 1px;
+      white-space: nowrap;
+      padding: 4px 16px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.72);
+      border: 3px solid #fde047;
+      color: #fef08a;
+      text-shadow: 0 3px 0 #7c2d12, 0 5px 14px rgba(0, 0, 0, 0.85);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+    }
+
+    .floating-callout.kind-combo {
+      color: #7dd3fc;
+      border-color: #38bdf8;
+      text-shadow: 0 3px 0 #0c4a6e, 0 5px 14px rgba(0, 0, 0, 0.85);
+    }
+
+    .floating-callout.kind-perfect {
+      color: #fde047;
+      border-color: #f59e0b;
+      background: linear-gradient(90deg, rgba(180, 83, 9, 0.9), rgba(225, 29, 72, 0.9));
+    }
+
+    /* Active Gameplay Corner Controls (strictly 5 buttons total, each 72x72px >= 68x68px!) */
     .hud-circle-btn {
       position: fixed;
       z-index: 20;
@@ -93,12 +131,12 @@
       cursor: pointer;
       box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45), inset 0 2px 4px rgba(255, 255, 255, 0.45);
       font-family: inherit;
-      font-weight: 800;
-      transition: transform 0.1s ease;
+      font-weight: 900;
+      transition: transform 0.1s ease, box-shadow 0.15s ease;
     }
 
     .hud-circle-btn:active {
-      transform: scale(0.94);
+      transform: scale(0.96);
     }
 
     .hud-circle-btn .icon {
@@ -107,9 +145,9 @@
     }
 
     .hud-circle-btn .lbl {
-      font-size: 12px;
+      font-size: 13px;
       line-height: 1.1;
-      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
     }
 
     #hud-btn-menu {
@@ -136,6 +174,25 @@
       background: linear-gradient(180deg, #fbbf24 0%, #d97706 100%);
     }
 
+    @keyframes specialReadyPulse {
+      0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 12px 3px rgba(253, 224, 71, 0.85), 0 6px 16px rgba(0, 0, 0, 0.5);
+        filter: brightness(1.05);
+      }
+      50% {
+        transform: scale(1.07);
+        box-shadow: 0 0 26px 8px rgba(56, 189, 248, 0.95), 0 8px 22px rgba(245, 158, 11, 0.9);
+        filter: brightness(1.24);
+      }
+    }
+
+    #hud-btn-special.is-ready {
+      border-color: #ffffff;
+      background: linear-gradient(180deg, #fde047 0%, #f97316 55%, #e11d48 100%);
+      animation: specialReadyPulse 0.9s infinite ease-in-out;
+    }
+
     #hud-btn-fire {
       bottom: 14px;
       right: 12px;
@@ -147,7 +204,7 @@
       background: linear-gradient(180deg, #fb7185 0%, #e11d48 100%);
     }
 
-    /* Overlay Modals (Title & 3D Podium Result) */
+    /* Overlay Modals (Title/20-Stage Select & Clear/Lose Result) */
     .overlay-backdrop {
       position: fixed;
       inset: 0;
@@ -155,15 +212,15 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 12px;
-      background: radial-gradient(circle at 50% 50%, rgba(15, 40, 78, 0.55) 0%, rgba(9, 25, 51, 0.78) 100%);
+      padding: 10px;
+      background: radial-gradient(circle at 50% 50%, rgba(15, 40, 78, 0.58) 0%, rgba(9, 25, 51, 0.82) 100%);
       pointer-events: auto;
     }
 
     #podium-overlay {
-      align-items: flex-end;
-      padding-bottom: 16px;
-      background: rgba(9, 25, 51, 0.22);
+      align-items: center;
+      padding-bottom: 120px;
+      background: rgba(9, 25, 51, 0.28);
     }
 
     #podium-overlay .overlay-card {
@@ -172,22 +229,24 @@
     }
 
     .overlay-card {
-      width: min(94vw, 520px);
-      border-radius: 28px;
-      padding: 18px 20px;
-      background: linear-gradient(180deg, rgba(30, 75, 138, 0.94) 0%, rgba(15, 40, 78, 0.96) 100%);
+      width: min(94vw, 660px);
+      max-height: calc(100vh - 20px);
+      overflow: hidden;
+      border-radius: 26px;
+      padding: 14px 18px;
+      background: linear-gradient(180deg, rgba(30, 75, 138, 0.95) 0%, rgba(15, 40, 78, 0.97) 100%);
       border: 3px solid #fde047;
       box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
       text-align: center;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
     }
 
     .title-badge {
       display: inline-block;
-      padding: 4px 14px;
+      padding: 3px 14px;
       border-radius: 999px;
       background: linear-gradient(90deg, #f59e0b, #ef4444);
       font-size: 13px;
@@ -198,7 +257,7 @@
 
     .overlay-title {
       margin: 0;
-      font-size: clamp(22px, 4vw, 32px);
+      font-size: clamp(20px, 3.6vw, 30px);
       font-weight: 900;
       color: #fef08a;
       text-shadow: 0 3px 8px rgba(0, 0, 0, 0.65);
@@ -206,26 +265,26 @@
 
     .overlay-subtitle {
       margin: 0;
-      font-size: 14px;
+      font-size: 13px;
       color: #e0f2fe;
-      line-height: 1.35;
+      line-height: 1.3;
     }
 
     .stage-picker-row {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 12px;
+      gap: 10px;
       width: 100%;
     }
 
     .stage-info-box {
       flex: 1;
       min-width: 130px;
-      padding: 8px 10px;
-      border-radius: 18px;
-      background: rgba(15, 23, 42, 0.55);
-      border: 2px solid rgba(56, 189, 248, 0.6);
+      padding: 6px 10px;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 2px solid rgba(56, 189, 248, 0.65);
     }
 
     .stage-info-box .st-name {
@@ -240,11 +299,66 @@
       margin-top: 2px;
     }
 
+    .stage-info-box .st-stars {
+      font-size: 13px;
+      font-weight: 900;
+      color: #fde047;
+      margin-top: 2px;
+    }
+
+    /* 20-Stage Overview Grid inside Stage Select Modal (2x10 >= 1024px wide, 4x5 narrower, cells >= 52x44px) */
+    #stage-grid-20 {
+      display: grid;
+      grid-template-columns: repeat(10, minmax(52px, 1fr));
+      gap: 5px;
+      width: 100%;
+      padding: 6px;
+      border-radius: 14px;
+      background: rgba(9, 25, 51, 0.55);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+    }
+
+    .stage-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 52px;
+      min-height: 44px;
+      height: 46px;
+      padding: 3px 2px;
+      border-radius: 8px;
+      background: rgba(30, 58, 138, 0.7);
+      border: 1.5px solid rgba(56, 189, 248, 0.5);
+      font-size: 12px;
+      font-weight: 800;
+      color: #ffffff;
+      cursor: pointer;
+      line-height: 1.1;
+    }
+
+    .stage-cell.is-selected {
+      border-color: #fde047;
+      background: rgba(217, 119, 6, 0.85);
+    }
+
+    .stage-cell.is-locked {
+      opacity: 0.55;
+      background: rgba(15, 23, 42, 0.75);
+      border-color: rgba(148, 163, 184, 0.35);
+    }
+
+    .stage-cell .sc-stars {
+      font-size: 10px;
+      color: #fde047;
+      letter-spacing: -0.5px;
+    }
+
     .action-btn-row {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 12px;
+      gap: 10px;
       width: 100%;
       flex-wrap: nowrap;
     }
@@ -253,7 +367,7 @@
       min-width: 72px;
       min-height: 72px;
       height: 72px;
-      padding: 0 18px;
+      padding: 0 16px;
       border-radius: 22px;
       border: 3px solid #fde047;
       font-family: inherit;
@@ -266,6 +380,11 @@
       justify-content: center;
       gap: 6px;
       box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+    }
+
+    .big-action-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
 
     .big-action-btn.primary {
@@ -286,26 +405,60 @@
     }
 
     .podium-stars-row {
-      font-size: 34px;
+      font-size: 32px;
       letter-spacing: 6px;
       color: #fde047;
       text-shadow: 0 3px 10px rgba(245, 158, 11, 0.8);
+    }
+
+    .perfect-stamp {
+      display: inline-block;
+      padding: 3px 14px;
+      border-radius: 999px;
+      border: 2px solid #ffffff;
+      background: linear-gradient(90deg, #f59e0b 0%, #ec4899 50%, #eab308 100%);
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 900;
+      letter-spacing: 1.5px;
+      box-shadow: 0 4px 14px rgba(245, 158, 11, 0.8);
+      transform: rotate(-3deg);
     }
 
     [hidden] {
       display: none !important;
     }
 
-    @media (max-height: 440px) {
+    @media (max-width: 1023px) {
       .overlay-card {
-        padding: 10px 16px;
+        width: min(95vw, 370px);
+        padding: 12px 12px;
         gap: 6px;
       }
+      #stage-grid-20 {
+        grid-template-columns: repeat(4, minmax(52px, 1fr));
+        gap: 5px;
+        padding: 6px;
+      }
+    }
+
+    @media (max-height: 440px) {
+      #podium-overlay {
+        padding-bottom: 58px;
+      }
+      .overlay-card {
+        width: min(92vw, 540px);
+        padding: 8px 14px;
+        gap: 5px;
+      }
       .overlay-title {
-        font-size: 20px;
+        font-size: 18px;
       }
       .overlay-subtitle {
         display: none;
+      }
+      #stage-grid-20 {
+        display: none !important;
       }
     }
   </style>
@@ -321,7 +474,10 @@
     <div class="status-chip">🎈 <span class="val" id="hud-remaining-label">0</span></div>
   </div>
 
-  <!-- 5 Kid-Friendly Active Gameplay Buttons (each >= 72x72px, <= 6 total!) -->
+  <!-- Non-interactive Floating Callout FX Layer (Avalanche, Combo, Perfect, Egg Rescue) -->
+  <div id="floating-fx-layer" data-testid="floating-fx-layer"></div>
+
+  <!-- 5 Kid-Friendly Active Gameplay Buttons (each >= 72x72px, strictly 5 total!) -->
   <button id="hud-btn-menu" class="hud-circle-btn" data-testid="hud-btn-menu" aria-label="选关菜单">
     <span class="icon">🏠</span>
     <span class="lbl">选关</span>
@@ -347,10 +503,10 @@
     <span class="lbl">发射</span>
   </button>
 
-  <!-- Title / Stage Select Modal (hidden during active play) -->
+  <!-- Title / 20-Stage Select Modal (hidden during active play) -->
   <div id="title-overlay" class="overlay-backdrop" data-testid="title-overlay" hidden>
     <div class="overlay-card">
-      <span class="title-badge">腾讯 QQ游戏大厅 经典重制</span>
+      <span class="title-badge">腾讯 QQ游戏大厅 经典重制 · 20关大冒险</span>
       <h1 class="overlay-title">🐉 QQ泡泡龙 3D</h1>
       <p class="overlay-subtitle">拖动瞄准 · 墙壁反弹 · 同色三消 · 悬空大掉落进聚宝盆！</p>
 
@@ -359,9 +515,12 @@
         <div class="stage-info-box" data-testid="stage-select-card">
           <div class="st-name" id="select-stage-name">第一关：彩虹初遇</div>
           <div class="st-desc" id="select-stage-desc">消除顶层同色泡泡，触发大片掉落加分！</div>
+          <div class="st-stars" id="select-stage-stars" data-testid="select-stage-stars">☆☆☆ · 已解锁 (1/20)</div>
         </div>
         <button id="btn-stage-next" class="big-action-btn nav" data-testid="btn-stage-next" aria-label="下一关">▶</button>
       </div>
+
+      <div id="stage-grid-20" data-testid="stage-grid-20"></div>
 
       <div class="action-btn-row">
         <button id="btn-start-stage" class="big-action-btn primary" data-testid="btn-start-stage">🎯 开始闯关</button>
@@ -370,11 +529,12 @@
     </div>
   </div>
 
-  <!-- 3D Star Podium Result Modal (hidden during active play) -->
+  <!-- Stage Clear / Danger Breach Lose Result Modal (hidden during active play) -->
   <div id="podium-overlay" class="overlay-backdrop" data-testid="podium-overlay" hidden>
     <div class="overlay-card">
       <span class="title-badge" id="podium-badge">STAGE CLEAR</span>
-      <h2 class="overlay-title" id="podium-title">🎉 闯关大胜利！</h2>
+      <div class="perfect-stamp" id="perfect-stamp" data-testid="perfect-stamp" hidden>PERFECT!</div>
+      <h2 class="overlay-title" id="podium-title" data-testid="podium-title">🎉 闯关大胜利！</h2>
       <div class="podium-stars-row" id="podium-stars" data-testid="podium-stars">★★★</div>
       <p class="overlay-subtitle" id="podium-summary">总分 1200 · 聚宝盆掉落 +650</p>
 

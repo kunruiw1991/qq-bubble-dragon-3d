@@ -29,8 +29,8 @@ A vibrant, glossy **Three.js r170 WebGL2 3D** remake of Tencent QQ Game Hall's c
    - **Rainbow Bubble (`彩虹泡泡`)**: Universal wildcard that matches and pops all adjacent bubble color clusters simultaneously.
    - **Star Lightning Bubble (`闪电泡泡`)**: Zaps and clears the entire horizontal row on impact.
 
-4. **2 Game Modes & 8 Progressive Stages**:
-   - **8 Progressive Stages (`闯关模式`)**: Combines classic **Clear All** stages and **Star-Critter Dragon Egg Rescue (`星星龙蛋营救`)** stages, culminating in a **3D Top-3 Star Podium (`★★★`)**.
+4. **2 Game Modes & 20 Progressive Stages**:
+   - **20 Progressive Stages (`闯关模式`)**: Combines classic **Clear All** stages and **Star-Critter Dragon Egg Rescue (`星星龙蛋营救`)** stages, culminating in a **3D Top-3 Star Podium (`★★★`)**.
    - **Endless Arcade (`无尽挑战`)**: Continuous survival mode where new bubble rows feed from the top ceiling while you chain massive cauldron avalanches.
 
 ---
@@ -49,6 +49,32 @@ A vibrant, glossy **Three.js r170 WebGL2 3D** remake of Tencent QQ Game Hall's c
 
 ---
 
+## 🫧 Changelog — Fun Overhaul (v1.1)
+
+The first release was a correct bubble shooter with no stakes: 8 tiny stages ended in ~10 shots, the
+chamber had only ≈8.8 rows of air, the lose screen still offered "下一关", and pops were polite.
+
+- **Taller chamber, real room to play** — ceiling 5.4 → 6.0, danger line −2.2 → −2.9 (≈10.3 rows of
+  air), launcher lowered, cauldrons 0.8×; the camera fills ≈92 % of the viewport height and bubbles
+  are ≈63 px at 1280×800.
+- **20 stages with a real curve** — the 8 hand-made boards plus 12 generated ones (stripes, checker,
+  double-arch, pyramid, egg-nest, zigzag) with colours ramping 3 → 4 → 5 → 6, eggs nested at row ≥ 3
+  behind ≥ 5 multi-colour neighbours, every board anchored across the whole ceiling (a single pop can
+  detach ≤ 8 % of a board). Measured with a greedy bot: stage 1 in 8–10 shots, stage 14 in ~12,
+  stage 20 in ~24; a random shooter still loses every stage within 60 shots. Progress and stars persist
+  in `localStorage['qq_bubble_progress']`; stage 20's clear button launches Endless (♾️ 挑战无尽).
+- **Juice** — 14 particles + expanding rings + camera shake per pop, per-bubble rising pitch, ≥ 4
+  dropped bubbles trigger 0.4 s slow-mo and "雪崩 ×N!", cauldron catches fire a coin fountain and the
+  dragon jumps, combos make the crew cheer, "PERFECT!" for ≤ par clears, sparkles + chirp on egg rescue.
+- **Honest lose/clear flow** — no more 3D podium blocks floating over the board; a sad crew + "再来一局"
+  on a loss (no 下一关), stars + 下一关 on a clear with the board emptied as bonus drops.
+- Stage-select cells ≥ 52×44 px, HUD text ≥ 16 px, launcher label "下一个:<colour>", ≤ 5 controls.
+- Writes `localStorage['qq_hall_progress'].bubbledragon` for the QQ Game Hall 3D progress badges.
+- E2E suite grown from 34 to 45 tests (geometry, generator determinism and anchoring, difficulty
+  table across all 20 stages, slow-mo, lose/clear flows, unlock persistence, 4-viewport audits).
+
+---
+
 ## 🧪 Local Development & Headless WebGL2 E2E Verification
 
 Zero build step or bundler is required; all ES modules use Safari-safe relative paths (`./src/*.js`, `../vendor/three.module.min.js`) with zero `<script type="importmap">`.
@@ -57,6 +83,6 @@ Zero build step or bundler is required; all ES modules use Safari-safe relative 
 # Serve locally
 python3 -m http.server 8080
 
-# Run the full 34-test headless Chrome WebGL2 E2E test suite
+# Run the full 45-test headless Chrome WebGL2 E2E test suite
 python3 tests/run_e2e.py --capture-screenshot
 ```

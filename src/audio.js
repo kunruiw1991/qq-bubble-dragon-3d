@@ -3,6 +3,8 @@
  * Pure WebAudio Synthesized Arcade BGM & SFX Engine.
  * - Zero external audio files required (0 HTTP 404s)
  * - Pure WebAudio oscillator/gain synthesis only
+ * - Per-bubble C5 + n semitones pitch steps (40ms apart), Avalanche, Combo Cheer,
+ *   Cauldron Coin Fountain, Egg Rescue Sparkle+Chirp, and 3-Star Perfect Fanfare
  * - Idempotent user-gesture unlock & immune to KeyboardEvent.repeat (autoRepeat)
  */
 
@@ -19,6 +21,8 @@ export class BubbleDragonAudio {
     this.unlockCalls = 0;
     this.sfxCount = 0;
     this.lastSfx = 'none';
+    this.lastPopPitches = [];
+    this.lastPopStepMs = 40;
     this.activeNodes = 0;
     this.repeatEventsIgnored = 0;
 
@@ -131,7 +135,7 @@ export class BubbleDragonAudio {
     bus = 'sfx',
   }) {
     if (this.muted || !this.ctx || !this.unlocked) return;
-    if (this.activeNodes > 24) return;
+    if (this.activeNodes >= 24) return;
     try {
       const now = this.ctx.currentTime + delay;
       const osc = this.ctx.createOscillator();
@@ -182,43 +186,97 @@ export class BubbleDragonAudio {
     this._playTone({ freq: 570, endFreq: 430, duration: 0.08, delay: 0.06, type: 'triangle', gain: 0.22 });
   }
 
+  /**
+   * Per-bubble pitch step: C5 (523.25 Hz) + n semitones, 40 ms apart!
+   */
   playClusterPop(poppedCount = 3, droppedCount = 0, combo = 1) {
     this.sfxCount += 1;
     this.lastSfx = droppedCount > 0 ? 'avalanche_pop' : 'cluster_pop';
-    const baseShift = Math.min(6, Math.max(0, combo - 1)) * 45;
-    const notes = [523.25 + baseShift, 659.25 + baseShift, 783.99 + baseShift, 1046.5 + baseShift];
-    const count = Math.min(notes.length, Math.max(2, poppedCount));
-    for (let i = 0; i < count; i++) {
+    const baseC5 = 523.25;
+    const count = Math.max(1, Math.min(12, Math.floor(poppedCount) || 3));
+    const pitches = [];
+    for (let n = 0; n < count; n++) {
+      const freq = Number((baseC5 * Math.pow(2, n / 12)).toFixed(2));
+      pitches.push(freq);
       this._playTone({
-        freq: notes[i],
-        endFreq: notes[i] * 1.12,
-        duration: 0.13,
-        delay: i * 0.045,
+        freq,
+        endFreq: freq * 1.09,
+        duration: 0.12,
+        delay: n * 0.04, // 40 ms apart
         type: 'triangle',
         gain: 0.28,
       });
     }
-    if (droppedCount > 0) {
-      const cascade = [659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.5];
-      const steps = Math.min(cascade.length, droppedCount + 1);
-      for (let j = 0; j < steps; j++) {
-        this._playTone({
-          freq: cascade[j],
-          endFreq: cascade[j] * 1.05,
-          duration: 0.12,
-          delay: 0.12 + j * 0.055,
-          type: 'sine',
-          gain: 0.25,
-        });
-      }
+    this.lastPopPitches = pitches;
+    this.lastPopStepMs = 40;
+  }
+
+  playAvalanche(droppedCount = 4) {
+    this.sfxCount += 1;
+    this.lastSfx = 'avalanche';
+    const notes = [659.25, 783.99, 987.77, 1174.66, 1318.51, 1567.98];
+    const steps = Math.min(notes.length, Math.max(3, droppedCount));
+    for (let i = 0; i < steps; i++) {
+      this._playTone({
+        freq: notes[i],
+        endFreq: notes[i] * 1.06,
+        duration: 0.13,
+        delay: i * 0.05,
+        type: 'sine',
+        gain: 0.27,
+      });
     }
+  }
+
+  playComboCheer(combo = 2) {
+    this.sfxCount += 1;
+    this.lastSfx = 'combo_cheer';
+    const shift = Math.min(5, Math.max(0, combo - 2)) * 60;
+    const chord = [587.33 + shift, 739.99 + shift, 880.0 + shift, 1174.66 + shift];
+    chord.forEach((f, idx) => {
+      this._playTone({
+        freq: f,
+        endFreq: f * 1.12,
+        duration: 0.11,
+        delay: idx * 0.04,
+        type: 'triangle',
+        gain: 0.26,
+      });
+    });
+  }
+
+  playEggRescue() {
+    this.sfxCount += 1;
+    this.lastSfx = 'egg_rescue';
+    // Sparkle chime + cute dragon hatchling chirp
+    const sparkle = [1046.5, 1318.51, 1567.98, 2093.0];
+    sparkle.forEach((f, i) => {
+      this._playTone({
+        freq: f,
+        endFreq: f * 1.05,
+        duration: 0.1,
+        delay: i * 0.035,
+        type: 'sine',
+        gain: 0.26,
+      });
+    });
+    // Cute upward chirp
+    this._playTone({
+      freq: 880,
+      endFreq: 1760,
+      duration: 0.14,
+      delay: 0.14,
+      type: 'triangle',
+      gain: 0.3,
+    });
   }
 
   playCauldronCatch(points = 100) {
     this.sfxCount += 1;
     this.lastSfx = 'cauldron_catch';
     const freq = points >= 250 ? 1567.98 : points >= 100 ? 1318.51 : 1046.5;
-    this._playTone({ freq, endFreq: freq * 1.15, duration: 0.14, type: 'sine', gain: 0.25 });
+    this._playTone({ freq, endFreq: freq * 1.18, duration: 0.13, type: 'sine', gain: 0.26 });
+    this._playTone({ freq: freq * 1.25, endFreq: freq * 1.5, duration: 0.1, delay: 0.045, type: 'triangle', gain: 0.2 });
   }
 
   playSpecial(special = 'bomb') {
@@ -237,11 +295,21 @@ export class BubbleDragonAudio {
     }
   }
 
-  playStageClear() {
+  playSpecialNotReady() {
     this.sfxCount += 1;
-    this.lastSfx = 'stage_clear';
-    const fanfare = [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5];
-    const durs = [0.12, 0.12, 0.12, 0.24, 0.12, 0.38];
+    this.lastSfx = 'special_not_ready';
+    this._playTone({ freq: 240, endFreq: 180, duration: 0.09, type: 'triangle', gain: 0.18 });
+  }
+
+  playStageClear(perfect = false) {
+    this.sfxCount += 1;
+    this.lastSfx = perfect ? 'perfect_fanfare' : 'stage_clear';
+    const fanfare = perfect
+      ? [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98, 2093.0]
+      : [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5];
+    const durs = perfect
+      ? [0.1, 0.1, 0.1, 0.14, 0.12, 0.14, 0.42]
+      : [0.12, 0.12, 0.12, 0.24, 0.12, 0.38];
     let t = 0;
     for (let i = 0; i < fanfare.length; i++) {
       this._playTone({ freq: fanfare[i], duration: durs[i], delay: t, type: 'triangle', gain: 0.32 });
@@ -266,6 +334,8 @@ export class BubbleDragonAudio {
       unlockCalls: this.unlockCalls,
       sfxCount: this.sfxCount,
       lastSfx: this.lastSfx,
+      lastPopPitches: this.lastPopPitches.slice(),
+      lastPopStepMs: this.lastPopStepMs,
       activeNodes: this.activeNodes,
       repeatEventsIgnored: this.repeatEventsIgnored,
     };

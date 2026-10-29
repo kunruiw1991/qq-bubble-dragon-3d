@@ -1,13 +1,15 @@
 /**
  * QQ Bubble Dragon Shooter 3D (QQ泡泡龙 3D)
  * Three.js r170 WebGL2 3D Crystal-Arcade Stage, Geared Brass Cannon,
- * Chibi Bubble Dragon & QQ Penguin Crew, Inner-Emblem Candy Bubbles,
- * 5 Glowing Bonus Cauldrons, Pearl Trajectory Ray & 3D Star Podium Renderer.
+ * Chibi Bubble Dragon & QQ Penguin Crew with Live Reactions, Inner-Emblem Candy Bubbles,
+ * 14-Particle Pop Bursts + Expanding Shockwave Rings + Camera Shake,
+ * 5 Glowing 0.8x Bonus Cauldrons + Coin Fountain, Pearl Trajectory Ray & 3D Star Podium Renderer.
  */
 
 import * as THREE from '../vendor/three.module.min.js';
 import {
   BUBBLE_RADIUS,
+  BUBBLE_DIAMETER,
   LEFT_WALL_X,
   RIGHT_WALL_X,
   BASE_CEILING_Y,
@@ -15,6 +17,7 @@ import {
   LAUNCHER_X,
   LAUNCHER_Y,
   CAULDRON_Y,
+  CAULDRON_SCALE,
   CAULDRON_SPECS,
 } from './sim.js';
 
@@ -27,13 +30,18 @@ export const COLOR_PALETTE = Object.freeze({
   orange: { hex: 0xff7b19, emissive: 0x552000, inner: 0xffd6a5, label: 'Tangerine Orange' },
 });
 
+// Chamber vertical bounds: top of ceiling bar (+6.52) to bottom of scaled cauldrons (-5.16)
+export const CHAMBER_TOP_Y = BASE_CEILING_Y + 0.52;
+export const CHAMBER_BOTTOM_Y = CAULDRON_Y - 0.38 * CAULDRON_SCALE;
+export const CHAMBER_CENTER_Y = (CHAMBER_TOP_Y + CHAMBER_BOTTOM_Y) * 0.5;
+export const CHAMBER_HEIGHT_WORLD = CHAMBER_TOP_Y - CHAMBER_BOTTOM_Y;
+
 function createTextBadgeTexture(text, bgHex = '#ff9f1c', borderHex = '#fff3b0', textColor = '#ffffff') {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 128;
   const ctx = canvas.getContext('2d');
 
-  // Rounded pill background
   ctx.clearRect(0, 0, 256, 128);
   ctx.fillStyle = bgHex;
   ctx.strokeStyle = borderHex;
@@ -63,8 +71,9 @@ export class BubbleDragonRenderer3D {
     this.scene.background = new THREE.Color(0x0f284e);
 
     this.camera = new THREE.PerspectiveCamera(42, 16 / 10, 0.1, 120);
-    this.camera.position.set(0, 0.35, 16.5);
-    this.camera.lookAt(0, 0.35, 0);
+    this.cameraLookY = CHAMBER_CENTER_Y;
+    this.camera.position.set(0, this.cameraLookY, 16.5);
+    this.camera.lookAt(0, this.cameraLookY, 0);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
@@ -86,16 +95,18 @@ export class BubbleDragonRenderer3D {
     this.scene.add(this.rootGroup);
 
     this.bubbleMeshPool = [];
-    this.activeBubbleCount = 0;
-
     this.fallingMeshPool = [];
-    this.activeFallingCount = 0;
-
     this.pearlMeshes = [];
     this.particleMeshes = [];
+    this.popRingMeshes = [];
     this.cauldronGroups = [];
     this.ceilingGearMeshes = [];
     this.interactiveTargets = [];
+    this.dragonArms = [];
+    this.penguinFlippers = [];
+
+    this.viewportWidth = 1280;
+    this.viewportHeight = 800;
 
     this._setupLights();
     this._buildArcadeStage();
@@ -121,14 +132,16 @@ export class BubbleDragonRenderer3D {
       bombSpike: new THREE.ConeGeometry(0.11, 0.28, 8),
       lightningBolt: new THREE.OctahedronGeometry(BUBBLE_RADIUS * 0.52, 0),
       pearlSphere: new THREE.SphereGeometry(0.11, 10, 10),
-      particleSphere: new THREE.SphereGeometry(0.12, 8, 8),
+      particleSphere: new THREE.SphereGeometry(0.13, 8, 8),
+      popRingTorus: new THREE.TorusGeometry(1.0, 0.065, 8, 24),
     };
   }
 
   _createSharedMaterials() {
-    // Note: ALL materials strictly obey metalness <= 0.22 for bright, warm arcade vibrancy!
+    // All materials strictly obey metalness <= 0.22 for bright, warm arcade vibrancy!
     const bubbleShells = {};
     const bubbleInners = {};
+    const ringMats = {};
     for (const [colorName, spec] of Object.entries(COLOR_PALETTE)) {
       bubbleShells[colorName] = new THREE.MeshStandardMaterial({
         color: spec.hex,
@@ -146,11 +159,17 @@ export class BubbleDragonRenderer3D {
         metalness: 0.1,
         roughness: 0.22,
       });
+      ringMats[colorName] = new THREE.MeshBasicMaterial({
+        color: spec.inner,
+        transparent: true,
+        opacity: 0.85,
+      });
     }
 
     return {
       bubbleShells,
       bubbleInners,
+      ringMats,
       highlightMat: new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
@@ -223,8 +242,8 @@ export class BubbleDragonRenderer3D {
     fillLight.position.set(-6, -3, 10);
     this.scene.add(fillLight);
 
-    const cannonLight = new THREE.PointLight(0xfde047, 1.4, 14);
-    cannonLight.position.set(0, -3.2, 3.2);
+    const cannonLight = new THREE.PointLight(0xfde047, 1.4, 15);
+    cannonLight.position.set(0, LAUNCHER_Y, 3.2);
     this.scene.add(cannonLight);
   }
 
@@ -232,8 +251,8 @@ export class BubbleDragonRenderer3D {
     this.stageGroup = new THREE.Group();
     this.rootGroup.add(this.stageGroup);
 
-    // Recessed glossy arcade chamber backboard
-    const boardGeo = new THREE.BoxGeometry(8.3, 11.2, 0.35);
+    // Recessed glossy arcade chamber backboard spanning taller chamber
+    const boardGeo = new THREE.BoxGeometry(8.3, 11.8, 0.35);
     const boardMat = new THREE.MeshStandardMaterial({
       color: 0x153462,
       emissive: 0x0b1f3f,
@@ -242,10 +261,10 @@ export class BubbleDragonRenderer3D {
       roughness: 0.4,
     });
     const backBoard = new THREE.Mesh(boardGeo, boardMat);
-    backBoard.position.set(0, 0.45, -0.75);
+    backBoard.position.set(0, CHAMBER_CENTER_Y, -0.75);
     this.stageGroup.add(backBoard);
 
-    // Decorative honeycomb hex rings on backplate
+    // Decorative honeycomb hex rings on backplate across 10 rows of air
     const hexRingGeo = new THREE.RingGeometry(0.42, 0.47, 6);
     const hexRingMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8,
@@ -253,7 +272,7 @@ export class BubbleDragonRenderer3D {
       opacity: 0.14,
       side: THREE.DoubleSide,
     });
-    for (let r = 0; r < 8; r++) {
+    for (let r = 0; r < 10; r++) {
       const cols = r % 2 === 0 ? 8 : 7;
       for (let c = 0; c < cols; c++) {
         const ring = new THREE.Mesh(hexRingGeo, hexRingMat);
@@ -266,18 +285,18 @@ export class BubbleDragonRenderer3D {
     }
 
     // Bevelled 3D Crystal Left & Right Side Rails
-    const railGeo = new THREE.CylinderGeometry(0.24, 0.24, 11.4, 16);
+    const railGeo = new THREE.CylinderGeometry(0.24, 0.24, 11.9, 16);
     const leftRail = new THREE.Mesh(railGeo, this.sharedMats.crystalRailMat);
-    leftRail.position.set(LEFT_WALL_X - 0.22, 0.45, 0);
+    leftRail.position.set(LEFT_WALL_X - 0.22, CHAMBER_CENTER_Y, 0);
     this.stageGroup.add(leftRail);
 
     const rightRail = new THREE.Mesh(railGeo, this.sharedMats.crystalRailMat);
-    rightRail.position.set(RIGHT_WALL_X + 0.22, 0.45, 0);
+    rightRail.position.set(RIGHT_WALL_X + 0.22, CHAMBER_CENTER_Y, 0);
     this.stageGroup.add(rightRail);
 
     // Golden bands along side rails
     const bandGeo = new THREE.TorusGeometry(0.27, 0.06, 10, 20);
-    for (const yPos of [-4.2, -2.55, -0.5, 1.5, 3.5, 5.5]) {
+    for (const yPos of [-4.6, DANGER_LINE_Y, -1.1, 0.8, 2.6, 4.4, BASE_CEILING_Y]) {
       for (const xSide of [LEFT_WALL_X - 0.22, RIGHT_WALL_X + 0.22]) {
         const band = new THREE.Mesh(bandGeo, this.sharedMats.goldMat);
         band.position.set(xSide, yPos, 0);
@@ -286,19 +305,19 @@ export class BubbleDragonRenderer3D {
       }
     }
 
-    // Glowing Danger Line bar at DANGER_LINE_Y
-    const dangerBarGeo = new THREE.CylinderGeometry(0.045, 0.045, 8.0, 12);
+    // Glowing Danger Line bar at DANGER_LINE_Y (-2.9)
+    const dangerBarGeo = new THREE.CylinderGeometry(0.05, 0.05, 8.0, 12);
     this.dangerBarMat = new THREE.MeshBasicMaterial({
       color: 0xff4d6d,
       transparent: true,
-      opacity: 0.78,
+      opacity: 0.84,
     });
     const dangerBar = new THREE.Mesh(dangerBarGeo, this.dangerBarMat);
     dangerBar.rotation.z = Math.PI / 2;
     dangerBar.position.set(0, DANGER_LINE_Y, 0.05);
     this.stageGroup.add(dangerBar);
 
-    // Floating background candy clouds & stars outside the chamber
+    // Floating background candy clouds outside the chamber
     const cloudMat = new THREE.MeshStandardMaterial({
       color: 0xe0f2fe,
       emissive: 0x38bdf8,
@@ -307,8 +326,8 @@ export class BubbleDragonRenderer3D {
       roughness: 0.5,
     });
     for (const [cx, cy, cz, sc] of [
-      [-6.2, 3.6, -2.5, 0.9],
-      [6.4, 2.8, -2.5, 1.0],
+      [-6.2, 3.8, -2.5, 0.9],
+      [6.4, 3.0, -2.5, 1.0],
       [-6.5, -2.2, -2.5, 0.85],
       [6.2, -2.6, -2.5, 0.9],
     ]) {
@@ -401,6 +420,7 @@ export class BubbleDragonRenderer3D {
     CAULDRON_SPECS.forEach((spec, idx) => {
       const g = new THREE.Group();
       g.position.set(spec.x, CAULDRON_Y, 0.1);
+      g.scale.setScalar(CAULDRON_SCALE);
 
       const cStyle = cauldronColors[idx];
       const potMat = new THREE.MeshStandardMaterial({
@@ -432,7 +452,6 @@ export class BubbleDragonRenderer3D {
       pool.position.y = 0.33;
       g.add(pool);
 
-      // Score badge on front of cauldron
       const badgeTex = createTextBadgeTexture(spec.label, cStyle.bg, '#fde047');
       const badge = new THREE.Mesh(
         new THREE.PlaneGeometry(1.05, 0.52),
@@ -554,7 +573,6 @@ export class BubbleDragonRenderer3D {
     const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const pupilMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
 
-    // Chubby body & cream tummy
     const body = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 14), greenMat);
     body.scale.set(1, 1.08, 0.92);
     dragon.add(body);
@@ -563,7 +581,6 @@ export class BubbleDragonRenderer3D {
     belly.position.set(0, -0.03, 0.18);
     dragon.add(belly);
 
-    // Oversized cute head & snout
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 14), greenMat);
     head.position.set(0, 0.52, 0.05);
     dragon.add(head);
@@ -573,7 +590,6 @@ export class BubbleDragonRenderer3D {
     snout.position.set(-0.08, 0.46, 0.34);
     dragon.add(snout);
 
-    // Expressive eyes
     for (const ex of [-0.14, 0.14]) {
       const eyeW = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10), eyeWhiteMat);
       eyeW.position.set(ex, 0.6, 0.35);
@@ -583,7 +599,6 @@ export class BubbleDragonRenderer3D {
       dragon.add(pupil);
     }
 
-    // Orange dorsal spikes along head and back
     for (const [sx, sy, sz, rotX] of [
       [0, 0.94, 0.02, -0.15],
       [0, 0.82, -0.26, -0.6],
@@ -596,12 +611,13 @@ export class BubbleDragonRenderer3D {
       dragon.add(spike);
     }
 
-    // Stubby arms reaching toward cannon wheel
+    this.dragonArms = [];
     for (const ax of [-0.36, 0.32]) {
       const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.34, 10), greenMat);
       arm.position.set(ax, 0.14, 0.22);
       arm.rotation.z = ax < 0 ? 0.6 : -0.5;
       dragon.add(arm);
+      this.dragonArms.push(arm);
     }
 
     return dragon;
@@ -632,7 +648,6 @@ export class BubbleDragonRenderer3D {
       roughness: 0.25,
     });
 
-    // Chubby body & white tummy
     const body = new THREE.Mesh(new THREE.SphereGeometry(0.44, 16, 14), blackMat);
     body.scale.set(1.0, 1.12, 0.92);
     penguin.add(body);
@@ -641,7 +656,6 @@ export class BubbleDragonRenderer3D {
     tummy.position.set(0, -0.02, 0.16);
     penguin.add(tummy);
 
-    // Red QQ Scarf
     const scarf = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.085, 10, 20), scarfMat);
     scarf.rotation.x = Math.PI / 2;
     scarf.position.set(0, 0.3, 0.04);
@@ -652,7 +666,6 @@ export class BubbleDragonRenderer3D {
     scarfTail.rotation.z = -0.2;
     penguin.add(scarfTail);
 
-    // Eyes & golden beak
     const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const pupilMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
     for (const ex of [-0.13, 0.13]) {
@@ -669,7 +682,16 @@ export class BubbleDragonRenderer3D {
     beak.position.set(0, 0.4, 0.44);
     penguin.add(beak);
 
-    // Glowing Feeder Pad above flippers
+    // Articulated penguin flippers for cheering
+    this.penguinFlippers = [];
+    for (const fx of [-0.38, 0.38]) {
+      const flipper = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.32, 10), blackMat);
+      flipper.position.set(fx, 0.08, 0.16);
+      flipper.rotation.z = fx < 0 ? 0.45 : -0.45;
+      penguin.add(flipper);
+      this.penguinFlippers.push(flipper);
+    }
+
     const pad = new THREE.Mesh(
       new THREE.CylinderGeometry(0.46, 0.38, 0.12, 18),
       this.sharedMats.crystalRailMat
@@ -680,12 +702,6 @@ export class BubbleDragonRenderer3D {
     return penguin;
   }
 
-  /**
-   * Creates a multi-part 3D Candy Bubble visual group with:
-   * - Glossy outer candy sphere
-   * - Cartoon specular highlight dome
-   * - Bespoke 3D inner emblem per color/special/egg so every bubble is 100% distinct!
-   */
   _createBubbleVisualGroup() {
     const group = new THREE.Group();
 
@@ -703,7 +719,6 @@ export class BubbleDragonRenderer3D {
     highlightMesh.scale.set(1.1, 0.75, 0.5);
     group.add(highlightMesh);
 
-    // Inner emblem meshes (only the active one is set visible)
     const emblems = {
       red: new THREE.Mesh(this.sharedGeos.emblemRed, this.sharedMats.bubbleInners.red),
       yellow: new THREE.Mesh(this.sharedGeos.emblemYellow, this.sharedMats.bubbleInners.yellow),
@@ -724,7 +739,6 @@ export class BubbleDragonRenderer3D {
       group.add(m);
     }
 
-    // Halo ring for special / egg bubbles
     const haloRing = new THREE.Mesh(
       new THREE.TorusGeometry(BUBBLE_RADIUS * 1.06, 0.055, 8, 20),
       this.sharedMats.goldMat
@@ -826,7 +840,7 @@ export class BubbleDragonRenderer3D {
     this.podiumGroup.visible = false;
     this.rootGroup.add(this.podiumGroup);
 
-    // 1st / 2nd / 3rd tiered pedestals
+    // 1st / 2nd / 3rd tiered pedestals (ONLY shown on STAGE CLEAR, never on LOSE!)
     const tiers = [
       { rank: 2, x: -1.65, h: 1.35, color: 0x60a5fa, label: '2ND' },
       { rank: 1, x: 0.0, h: 1.85, color: 0xfbbf24, label: '1ST' },
@@ -861,21 +875,50 @@ export class BubbleDragonRenderer3D {
   resize(width, height) {
     const w = Math.max(1, Number(width) || 1280);
     const h = Math.max(1, Number(height) || 800);
+    this.viewportWidth = w;
+    this.viewportHeight = h;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
 
-    // Frame the chamber so it always fills >= 60% of the viewport cleanly
-    // Chamber spans width ~9.2 (-4.6..4.6) and height ~11.6 (-5.2..6.4)
-    const targetWidth = 9.8;
-    const targetHeight = 12.2;
+    // Frame the chamber so it fills ~92% of viewport height on 1280x800 and 1024x768
+    // and stays fully visible with >=68px HUD on 844x390 and 390x844.
+    const targetFillRatio = 0.92;
+    const targetHeight = CHAMBER_HEIGHT_WORLD / targetFillRatio; // ~12.69 world units
+    const targetWidth = 9.35; // Chamber width with crystal side rails (-4.46..+4.46)
     const fovRad = (this.camera.fov * Math.PI) / 180;
     const distForHeight = (targetHeight * 0.5) / Math.tan(fovRad * 0.5);
     const distForWidth = (targetWidth * 0.5) / (Math.tan(fovRad * 0.5) * this.camera.aspect);
     const camZ = Math.max(distForHeight, distForWidth);
 
-    this.camera.position.set(0, 0.32, camZ);
-    this.camera.lookAt(0, 0.32, 0);
+    this.cameraLookY = CHAMBER_CENTER_Y;
+    this.camera.position.set(0, this.cameraLookY, camZ);
+    this.camera.lookAt(0, this.cameraLookY, 0);
     this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
+  }
+
+  /**
+   * Computes exact screen-space chamber & bubble metrics at z=0 for verification.
+   */
+  getChamberScreenMetrics() {
+    const fovRad = (this.camera.fov * Math.PI) / 180;
+    const camZ = this.camera.position.z;
+    const visibleWorldHeight = 2 * camZ * Math.tan(fovRad * 0.5);
+    const visibleWorldWidth = visibleWorldHeight * this.camera.aspect;
+    const pxPerWorldUnit = this.viewportHeight / visibleWorldHeight;
+    const bubbleDiameterPx = BUBBLE_DIAMETER * pxPerWorldUnit;
+    const chamberHeightPx = CHAMBER_HEIGHT_WORLD * pxPerWorldUnit;
+    const chamberHeightRatio = chamberHeightPx / this.viewportHeight;
+    return {
+      viewportWidth: this.viewportWidth,
+      viewportHeight: this.viewportHeight,
+      visibleWorldWidth: Number(visibleWorldWidth.toFixed(3)),
+      visibleWorldHeight: Number(visibleWorldHeight.toFixed(3)),
+      bubbleDiameterPx: Number(bubbleDiameterPx.toFixed(2)),
+      chamberHeightPx: Number(chamberHeightPx.toFixed(2)),
+      chamberHeightRatio: Number(chamberHeightRatio.toFixed(4)),
+      podiumVisible: Boolean(this.podiumGroup && this.podiumGroup.visible),
+    };
   }
 
   /**
@@ -911,18 +954,79 @@ export class BubbleDragonRenderer3D {
   render(simState, uiScreen = 'playing') {
     const tick = simState.tick || 0;
 
+    // 0. Apply Camera Shake on rootGroup (keeps camera raycasting 100% invariant!)
+    const shakeInt = simState.cameraShake?.intensity || 0;
+    if (shakeInt > 0) {
+      this.rootGroup.position.set(
+        Math.sin(tick * 2.1) * shakeInt,
+        Math.cos(tick * 2.7) * shakeInt,
+        0
+      );
+    } else {
+      this.rootGroup.position.set(0, 0, 0);
+    }
+
     // 1. Update compressor ceiling bar & rotating gears
     this.ceilingGroup.position.y = simState.ceilingY;
     for (let i = 0; i < this.ceilingGearMeshes.length; i++) {
       this.ceilingGearMeshes[i].rotation.z = (i % 2 === 0 ? 1 : -1) * tick * 0.03;
     }
 
-    // 2. Update Cannon aim rotation & crew animation
+    // 2. Update Cannon aim rotation & Crew Reactions (jump, cheer, sad, idle)
     this.cannonTurret.rotation.z = -simState.aimAngle;
     this.cannonWheel.rotation.z = simState.aimAngle * 2.5;
-    this.dragonCrew.rotation.z = -simState.aimAngle * 0.22;
-    this.dragonCrew.position.y = -0.1 + Math.sin(tick * 0.1) * 0.04;
-    this.penguinCrew.position.y = -0.12 + Math.cos(tick * 0.1) * 0.04;
+
+    const crew = simState.crew || {};
+    const dState = simState.status === 'lost' ? 'sad' : crew.dragonState || 'idle';
+    const pState = simState.status === 'lost' ? 'sad' : crew.penguinState || 'idle';
+
+    // Dragon animation
+    if (dState === 'sad') {
+      this.dragonCrew.position.y = -0.26;
+      this.dragonCrew.rotation.x = 0.38;
+      this.dragonCrew.rotation.z = 0.16 + Math.sin(tick * 0.08) * 0.04;
+      if (this.dragonArms[0]) this.dragonArms[0].rotation.z = 1.25;
+      if (this.dragonArms[1]) this.dragonArms[1].rotation.z = -1.25;
+    } else if (dState === 'jump') {
+      this.dragonCrew.position.y = -0.1 + Math.abs(Math.sin(tick * 0.36)) * 0.58;
+      this.dragonCrew.rotation.x = 0;
+      this.dragonCrew.rotation.z = Math.sin(tick * 0.25) * 0.18;
+      if (this.dragonArms[0]) this.dragonArms[0].rotation.z = -0.75 + Math.sin(tick * 0.5) * 0.4;
+      if (this.dragonArms[1]) this.dragonArms[1].rotation.z = 0.75 - Math.sin(tick * 0.5) * 0.4;
+    } else if (dState === 'cheer') {
+      this.dragonCrew.position.y = -0.1 + Math.abs(Math.sin(tick * 0.4)) * 0.44;
+      this.dragonCrew.rotation.x = 0;
+      this.dragonCrew.rotation.z = Math.sin(tick * 0.32) * 0.22;
+      if (this.dragonArms[0]) this.dragonArms[0].rotation.z = -0.85 + Math.sin(tick * 0.6) * 0.65;
+      if (this.dragonArms[1]) this.dragonArms[1].rotation.z = 0.85 + Math.cos(tick * 0.6) * 0.65;
+    } else {
+      this.dragonCrew.position.y = -0.1 + Math.sin(tick * 0.1) * 0.04;
+      this.dragonCrew.rotation.x = 0;
+      this.dragonCrew.rotation.z = -simState.aimAngle * 0.22;
+      if (this.dragonArms[0]) this.dragonArms[0].rotation.z = 0.6;
+      if (this.dragonArms[1]) this.dragonArms[1].rotation.z = -0.5;
+    }
+
+    // Penguin animation
+    if (pState === 'sad') {
+      this.penguinCrew.position.y = -0.25;
+      this.penguinCrew.rotation.x = 0.32;
+      this.penguinCrew.rotation.z = -0.14 + Math.cos(tick * 0.08) * 0.04;
+      if (this.penguinFlippers[0]) this.penguinFlippers[0].rotation.z = 1.15;
+      if (this.penguinFlippers[1]) this.penguinFlippers[1].rotation.z = -1.15;
+    } else if (pState === 'cheer') {
+      this.penguinCrew.position.y = -0.12 + Math.abs(Math.cos(tick * 0.4)) * 0.4;
+      this.penguinCrew.rotation.x = 0;
+      this.penguinCrew.rotation.z = Math.cos(tick * 0.32) * 0.2;
+      if (this.penguinFlippers[0]) this.penguinFlippers[0].rotation.z = -0.8 + Math.sin(tick * 0.6) * 0.6;
+      if (this.penguinFlippers[1]) this.penguinFlippers[1].rotation.z = 0.8 - Math.sin(tick * 0.6) * 0.6;
+    } else {
+      this.penguinCrew.position.y = -0.12 + Math.cos(tick * 0.1) * 0.04;
+      this.penguinCrew.rotation.x = 0;
+      this.penguinCrew.rotation.z = 0;
+      if (this.penguinFlippers[0]) this.penguinFlippers[0].rotation.z = 0.45;
+      if (this.penguinFlippers[1]) this.penguinFlippers[1].rotation.z = -0.45;
+    }
 
     // 3. Update Current & Next bubbles in Cannon & Penguin Feeder
     this._configureBubbleVisual(
@@ -976,16 +1080,68 @@ export class BubbleDragonRenderer3D {
       }
     }
 
-    // 7. Update 5 Bottom Bonus Cauldrons bounce pulse on catch
+    // 7. Update 3D Burst, Coin Fountain & Sparkle Particles
+    const particles = simState.particles || [];
+    while (this.particleMeshes.length < particles.length && this.particleMeshes.length < 180) {
+      const pm = new THREE.Mesh(
+        this.sharedGeos.particleSphere,
+        this.sharedMats.bubbleInners.yellow
+      );
+      pm.visible = false;
+      this.rootGroup.add(pm);
+      this.particleMeshes.push(pm);
+    }
+    for (let i = 0; i < this.particleMeshes.length; i++) {
+      const pm = this.particleMeshes[i];
+      if (i < particles.length) {
+        const p = particles[i];
+        pm.visible = true;
+        pm.position.set(p.x, p.y, p.z || 0.28);
+        pm.material =
+          p.kind === 'coin'
+            ? this.sharedMats.goldMat
+            : this.sharedMats.bubbleInners[p.color] || this.sharedMats.bubbleInners.yellow;
+        const lifeRatio = Math.max(0.15, (p.life || 0.1) / (p.maxLife || 0.5));
+        pm.scale.setScalar(p.kind === 'coin' ? lifeRatio * 1.15 : lifeRatio);
+      } else {
+        pm.visible = false;
+      }
+    }
+
+    // 8. Update Expanding 3D Pop Rings
+    const popRings = simState.popRings || [];
+    while (this.popRingMeshes.length < popRings.length && this.popRingMeshes.length < 48) {
+      const rm = new THREE.Mesh(
+        this.sharedGeos.popRingTorus,
+        this.sharedMats.ringMats.yellow
+      );
+      rm.visible = false;
+      this.rootGroup.add(rm);
+      this.popRingMeshes.push(rm);
+    }
+    for (let i = 0; i < this.popRingMeshes.length; i++) {
+      const rm = this.popRingMeshes[i];
+      if (i < popRings.length) {
+        const r = popRings[i];
+        rm.visible = true;
+        rm.position.set(r.x, r.y, 0.3);
+        rm.material = this.sharedMats.ringMats[r.color] || this.sharedMats.ringMats.yellow;
+        rm.scale.setScalar(r.radius || 0.5);
+      } else {
+        rm.visible = false;
+      }
+    }
+
+    // 9. Update 5 Bottom Bonus Cauldrons (base 0.8x scale + bounce pulse on catch)
     for (let i = 0; i < this.cauldronGroups.length; i++) {
       const cg = this.cauldronGroups[i];
       const cState = simState.cauldrons && simState.cauldrons[i];
       const age = cState ? tick - (cState.lastHitTick ?? -999) : 999;
-      const bounce = age >= 0 && age < 25 ? 1 + Math.sin((1 - age / 25) * Math.PI) * 0.22 : 1;
-      cg.scale.set(bounce, bounce, bounce);
+      const bounce = age >= 0 && age < 25 ? 1 + Math.sin((1 - age / 25) * Math.PI) * 0.25 : 1;
+      cg.scale.setScalar(CAULDRON_SCALE * bounce);
     }
 
-    // 8. Update Live 3D Pearl Trajectory Preview Ray & Ghost Hex Snap Ring
+    // 10. Update Live 3D Pearl Trajectory Preview Ray & Ghost Hex Snap Ring
     const showPreview = simState.status === 'playing' && !simState.projectile && simState.trajectory;
     if (showPreview) {
       this.trajectoryGroup.visible = true;
@@ -1022,8 +1178,9 @@ export class BubbleDragonRenderer3D {
       this.trajectoryGroup.visible = false;
     }
 
-    // 9. Update 3D Star Podium visibility & spinning stars
-    const showPodium = uiScreen === 'podium' || simState.status !== 'playing';
+    // 11. Update 3D Star Podium visibility (STRICTLY ONLY ON STAGE CLEAR, NEVER ON LOSE!)
+    const showPodium =
+      simState.status === 'cleared' && (uiScreen === 'podium' || simState.status === 'cleared');
     this.podiumGroup.visible = showPodium;
     if (showPodium) {
       const starsEarned = simState.podiumStars || 0;
