@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>QQ泡泡龙 3D — QQ Bubble Dragon Shooter 3D</title>
+  <link rel="icon" href="data:," />
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 35%, #1e4b8a 0%, #0f284e 70%, #091933 100%);
+      font-family: "Fredoka", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: #ffffff;
+      touch-action: none;
+    }
+
+    #game-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      z-index: 1;
+      touch-action: none;
+      cursor: crosshair;
+    }
+
+    /* Non-interactive Top Status Ribbon (pointer-events: none so it never blocks 3D aim) */
+    #top-status-bar {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 16px;
+      border-radius: 999px;
+      background: rgba(15, 40, 78, 0.82);
+      border: 2px solid rgba(253, 224, 71, 0.75);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+      pointer-events: none;
+      white-space: nowrap;
+      max-width: calc(100vw - 180px);
+      overflow: hidden;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 14px;
+      font-weight: 800;
+      color: #fef08a;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+    }
+
+    .status-chip span.val {
+      color: #ffffff;
+      font-size: 15px;
+    }
+
+    /* Active Gameplay Corner Controls (<= 5 buttons total, each 72x72px >= 68x68px!) */
+    .hud-circle-btn {
+      position: fixed;
+      z-index: 20;
+      width: 72px;
+      height: 72px;
+      min-width: 72px;
+      min-height: 72px;
+      border-radius: 22px;
+      border: 3px solid #fde047;
+      background: linear-gradient(180deg, #38bdf8 0%, #0284c7 100%);
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 4px;
+      cursor: pointer;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45), inset 0 2px 4px rgba(255, 255, 255, 0.45);
+      font-family: inherit;
+      font-weight: 800;
+      transition: transform 0.1s ease;
+    }
+
+    .hud-circle-btn:active {
+      transform: scale(0.94);
+    }
+
+    .hud-circle-btn .icon {
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .hud-circle-btn .lbl {
+      font-size: 12px;
+      line-height: 1.1;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+    }
+
+    #hud-btn-menu {
+      top: 12px;
+      left: 12px;
+      background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+    }
+
+    #hud-btn-audio {
+      top: 12px;
+      right: 12px;
+      background: linear-gradient(180deg, #a78bfa 0%, #6d28d9 100%);
+    }
+
+    #hud-btn-swap {
+      bottom: 14px;
+      left: 12px;
+      background: linear-gradient(180deg, #34d399 0%, #059669 100%);
+    }
+
+    #hud-btn-special {
+      bottom: 14px;
+      left: 96px;
+      background: linear-gradient(180deg, #fbbf24 0%, #d97706 100%);
+    }
+
+    #hud-btn-fire {
+      bottom: 14px;
+      right: 12px;
+      width: 76px;
+      height: 76px;
+      min-width: 76px;
+      min-height: 76px;
+      border-radius: 38px;
+      background: linear-gradient(180deg, #fb7185 0%, #e11d48 100%);
+    }
+
+    /* Overlay Modals (Title & 3D Podium Result) */
+    .overlay-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      background: radial-gradient(circle at 50% 50%, rgba(15, 40, 78, 0.55) 0%, rgba(9, 25, 51, 0.78) 100%);
+      pointer-events: auto;
+    }
+
+    #podium-overlay {
+      align-items: flex-end;
+      padding-bottom: 16px;
+      background: rgba(9, 25, 51, 0.22);
+    }
+
+    #podium-overlay .overlay-card {
+      padding: 12px 18px;
+      gap: 6px;
+    }
+
+    .overlay-card {
+      width: min(94vw, 520px);
+      border-radius: 28px;
+      padding: 18px 20px;
+      background: linear-gradient(180deg, rgba(30, 75, 138, 0.94) 0%, rgba(15, 40, 78, 0.96) 100%);
+      border: 3px solid #fde047;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .title-badge {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #f59e0b, #ef4444);
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 0.5px;
+    }
+
+    .overlay-title {
+      margin: 0;
+      font-size: clamp(22px, 4vw, 32px);
+      font-weight: 900;
+      color: #fef08a;
+      text-shadow: 0 3px 8px rgba(0, 0, 0, 0.65);
+    }
+
+    .overlay-subtitle {
+      margin: 0;
+      font-size: 14px;
+      color: #e0f2fe;
+      line-height: 1.35;
+    }
+
+    .stage-picker-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .stage-info-box {
+      flex: 1;
+      min-width: 130px;
+      padding: 8px 10px;
+      border-radius: 18px;
+      background: rgba(15, 23, 42, 0.55);
+      border: 2px solid rgba(56, 189, 248, 0.6);
+    }
+
+    .stage-info-box .st-name {
+      font-size: 15px;
+      font-weight: 800;
+      color: #fef08a;
+    }
+
+    .stage-info-box .st-desc {
+      font-size: 12px;
+      color: #bae6fd;
+      margin-top: 2px;
+    }
+
+    .action-btn-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      width: 100%;
+      flex-wrap: nowrap;
+    }
+
+    .big-action-btn {
+      min-width: 72px;
+      min-height: 72px;
+      height: 72px;
+      padding: 0 18px;
+      border-radius: 22px;
+      border: 3px solid #fde047;
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 900;
+      color: #ffffff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+    }
+
+    .big-action-btn.primary {
+      flex: 1;
+      background: linear-gradient(180deg, #fb7185 0%, #e11d48 100%);
+    }
+
+    .big-action-btn.secondary {
+      flex: 1;
+      background: linear-gradient(180deg, #34d399 0%, #059669 100%);
+    }
+
+    .big-action-btn.nav {
+      width: 72px;
+      padding: 0;
+      background: linear-gradient(180deg, #38bdf8 0%, #0284c7 100%);
+      font-size: 22px;
+    }
+
+    .podium-stars-row {
+      font-size: 34px;
+      letter-spacing: 6px;
+      color: #fde047;
+      text-shadow: 0 3px 10px rgba(245, 158, 11, 0.8);
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    @media (max-height: 440px) {
+      .overlay-card {
+        padding: 10px 16px;
+        gap: 6px;
+      }
+      .overlay-title {
+        font-size: 20px;
+      }
+      .overlay-subtitle {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas" data-testid="arena-canvas"></canvas>
+
+  <!-- Non-interactive Top Status Bar -->
+  <div id="top-status-bar" data-testid="top-status-bar">
+    <div class="status-chip">🎯 <span class="val" id="hud-stage-label">第1关</span></div>
+    <div class="status-chip">⭐ <span class="val" id="hud-score-label">0</span></div>
+    <div class="status-chip">🔥 <span class="val" id="hud-combo-label">x0</span></div>
+    <div class="status-chip">🎈 <span class="val" id="hud-remaining-label">0</span></div>
+  </div>
+
+  <!-- 5 Kid-Friendly Active Gameplay Buttons (each >= 72x72px, <= 6 total!) -->
+  <button id="hud-btn-menu" class="hud-circle-btn" data-testid="hud-btn-menu" aria-label="选关菜单">
+    <span class="icon">🏠</span>
+    <span class="lbl">选关</span>
+  </button>
+
+  <button id="hud-btn-audio" class="hud-circle-btn" data-testid="hud-btn-audio" aria-label="音乐开关">
+    <span class="icon" id="hud-audio-icon">🔊</span>
+    <span class="lbl" id="hud-audio-label">音乐</span>
+  </button>
+
+  <button id="hud-btn-swap" class="hud-circle-btn" data-testid="hud-btn-swap" aria-label="换球">
+    <span class="icon">🔄</span>
+    <span class="lbl" id="hud-swap-label">换球</span>
+  </button>
+
+  <button id="hud-btn-special" class="hud-circle-btn" data-testid="hud-btn-special" aria-label="必杀泡泡">
+    <span class="icon" id="hud-special-icon">⚡</span>
+    <span class="lbl" id="hud-special-label">必杀</span>
+  </button>
+
+  <button id="hud-btn-fire" class="hud-circle-btn" data-testid="hud-btn-fire" aria-label="发射泡泡">
+    <span class="icon">🚀</span>
+    <span class="lbl">发射</span>
+  </button>
+
+  <!-- Title / Stage Select Modal (hidden during active play) -->
+  <div id="title-overlay" class="overlay-backdrop" data-testid="title-overlay" hidden>
+    <div class="overlay-card">
+      <span class="title-badge">腾讯 QQ游戏大厅 经典重制</span>
+      <h1 class="overlay-title">🐉 QQ泡泡龙 3D</h1>
+      <p class="overlay-subtitle">拖动瞄准 · 墙壁反弹 · 同色三消 · 悬空大掉落进聚宝盆！</p>
+
+      <div class="stage-picker-row">
+        <button id="btn-stage-prev" class="big-action-btn nav" data-testid="btn-stage-prev" aria-label="上一关">◀</button>
+        <div class="stage-info-box" data-testid="stage-select-card">
+          <div class="st-name" id="select-stage-name">第一关：彩虹初遇</div>
+          <div class="st-desc" id="select-stage-desc">消除顶层同色泡泡，触发大片掉落加分！</div>
+        </div>
+        <button id="btn-stage-next" class="big-action-btn nav" data-testid="btn-stage-next" aria-label="下一关">▶</button>
+      </div>
+
+      <div class="action-btn-row">
+        <button id="btn-start-stage" class="big-action-btn primary" data-testid="btn-start-stage">🎯 开始闯关</button>
+        <button id="btn-start-endless" class="big-action-btn secondary" data-testid="btn-start-endless">♾️ 无尽挑战</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3D Star Podium Result Modal (hidden during active play) -->
+  <div id="podium-overlay" class="overlay-backdrop" data-testid="podium-overlay" hidden>
+    <div class="overlay-card">
+      <span class="title-badge" id="podium-badge">STAGE CLEAR</span>
+      <h2 class="overlay-title" id="podium-title">🎉 闯关大胜利！</h2>
+      <div class="podium-stars-row" id="podium-stars" data-testid="podium-stars">★★★</div>
+      <p class="overlay-subtitle" id="podium-summary">总分 1200 · 聚宝盆掉落 +650</p>
+
+      <div class="action-btn-row">
+        <button id="btn-retry" class="big-action-btn secondary" data-testid="btn-retry">🔄 再来一局</button>
+        <button id="btn-next-stage" class="big-action-btn primary" data-testid="btn-next-stage">⏭️ 下一关</button>
+        <button id="btn-home" class="big-action-btn nav" data-testid="btn-home" aria-label="返回选关">🏠</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
